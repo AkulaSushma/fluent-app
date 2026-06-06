@@ -1,0 +1,41 @@
+{
+  "expo": {
+    "name": "Engura",
+    "slug": "engura",
+    "scheme": "engura",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "backgroundColor": "#F4F1EB",
+      "resizeMode": "contain"
+    },
+    "ios": {
+      "supportsTablet": false
+    },
+    "android": {
+      "package": "com.lingura.engura",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "backgroundColor": "#F4F1EB"
+      },
+      "permissions": [
+        "RECORD_AUDIO",
+        "MODIFY_AUDIO_SETTINGS"
+      ]
+    },
+    "plugins": [
+      "expo-font",
+      "expo-asset",
+      "expo-status-bar",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Allow Fluent to access your microphone for speech evaluation.",
+          "recordAudioAndroid": true
+        }
+      ]
+    ]
+  }
+}
