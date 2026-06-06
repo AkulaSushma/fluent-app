@@ -25,6 +25,17 @@ async def generate_grammar_lesson(topic: str, level: str = "advanced") -> dict:
     if cache_key in _grammar_lessons_cache:
         return _grammar_lessons_cache[cache_key]
 
+    # Try loading from the pre-defined local library first for instantaneous load and zero AI cost
+    try:
+        from app.services.content_library import get_grammar_topic_by_id, get_grammar_lesson
+        lesson = get_grammar_topic_by_id(topic) or get_grammar_lesson(topic)
+        if lesson and "quiz" in lesson and lesson["quiz"]:
+            _grammar_lessons_cache[cache_key] = lesson
+            return lesson
+    except Exception as e:
+        import logging
+        logging.warning(f"Failed to load lesson '{topic}' from library, falling back to AI: {e}")
+
     try:
         messages = [
             {

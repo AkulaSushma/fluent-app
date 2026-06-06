@@ -357,6 +357,17 @@ async def get_tech_article(
     if today in _tech_article_cache:
         return _tech_article_cache[today]
 
+    # Serve high-quality articles from the library sequentially to save AI cost and load instantly
+    try:
+        idx = today.day % len(_FALLBACK_TECH_ARTICLES)
+        article = dict(_FALLBACK_TECH_ARTICLES[idx])
+        if "vocabulary_highlights" not in article:
+            article["vocabulary_highlights"] = []
+        _tech_article_cache[today] = article
+        return article
+    except Exception as exc:
+        log.warning("Failed to load tech article from library: %s", exc)
+
     try:
         from app.services.ai_router import ai_json
 
@@ -406,6 +417,22 @@ async def get_tongue_twister(
     if cache_key in _tongue_twister_cache:
         return _tongue_twister_cache[cache_key]
 
+    # Serve high-quality pre-defined tongue twisters instantly with zero AI cost
+    try:
+        pool = _FALLBACK_TWISTERS.get(level, _FALLBACK_TWISTERS["intermediate"])
+        idx = today.day % len(pool)
+        data = dict(pool[idx])
+        # Add audio URLs dynamically to both AI generated and fallback data
+        data["warm_up_audio"] = _get_tts_url(data.get("warm_up", ""))
+        data["challenge_audio"] = _get_tts_url(data.get("challenge", ""))
+        for t in data.get("twisters", []):
+            t["audio_url"] = _get_tts_url(t.get("text", ""))
+
+        _tongue_twister_cache[cache_key] = data
+        return data
+    except Exception as exc:
+        log.warning("Failed to load tongue twister from fallback library: %s", exc)
+
     try:
         from app.services.ai_router import ai_json
 
@@ -450,6 +477,15 @@ async def get_corporate_phrases(
     today = date.today()
     if today in _corporate_phrases_cache:
         return _corporate_phrases_cache[today]
+
+    # Serve high-quality pre-defined corporate phrases instantly with zero AI cost
+    try:
+        idx = today.day % len(_FALLBACK_CORPORATE_PHRASES)
+        data = dict(_FALLBACK_CORPORATE_PHRASES[idx])
+        _corporate_phrases_cache[today] = data
+        return data
+    except Exception as exc:
+        log.warning("Failed to load corporate phrases from fallback library: %s", exc)
 
     try:
         from app.services.ai_router import ai_json
