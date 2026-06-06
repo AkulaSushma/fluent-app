@@ -38,6 +38,7 @@ export default function HomeScreen() {
     minutesWeek,
     goalProgress,
     dailyMinutes,
+    userSettings,
     name,
     initials,
     deck,
@@ -150,6 +151,10 @@ export default function HomeScreen() {
   ];
 
   const firstName = name.split(' ')[0];
+  const todayMinutes = dailyMinutes[6] || 0;
+  const goalMinutes = userSettings?.daily_goal_minutes || 30;
+  const goalRatio = Math.min(todayMinutes / goalMinutes, 1);
+
   const dateStr = new Date().toLocaleDateString('en-US', {
     weekday: 'long',
     day: 'numeric',
@@ -296,6 +301,27 @@ export default function HomeScreen() {
             </Text>
             <Text style={styles.goalSub}>
               Hit 100% on your daily plan to unlock tomorrow's syllabus day.
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.goalDivider} />
+
+        <View style={styles.practiceGoalRow}>
+          <View style={styles.practiceTextContainer}>
+            <View style={styles.practiceTitleRow}>
+              <Text style={styles.practiceGoalTitle}>Daily Study Target</Text>
+              <Text style={styles.practiceGoalValue}>
+                {todayMinutes} / {goalMinutes} min
+              </Text>
+            </View>
+            <View style={styles.progressBarTrack}>
+              <View style={[styles.progressBarFill, { width: `${goalRatio * 100}%` }]} />
+            </View>
+            <Text style={styles.practiceGoalSub}>
+              {todayMinutes >= goalMinutes
+                ? "🎉 Daily study goal reached! Great job!"
+                : `${goalMinutes - todayMinutes} more minutes to hit your daily target.`}
             </Text>
           </View>
         </View>
@@ -669,6 +695,52 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: palette.ink2,
     lineHeight: 19,
+  },
+  goalDivider: {
+    height: 1,
+    backgroundColor: palette.line2,
+    marginVertical: space.md,
+  },
+  practiceGoalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  practiceTextContainer: {
+    flex: 1,
+  },
+  practiceTitleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: space.xs,
+  },
+  practiceGoalTitle: {
+    fontFamily: font.serifMed,
+    fontSize: 16,
+    color: palette.ink,
+  },
+  practiceGoalValue: {
+    fontFamily: font.sansBold,
+    fontSize: 14,
+    color: palette.accent,
+  },
+  progressBarTrack: {
+    height: 8,
+    borderRadius: radius.sm,
+    backgroundColor: palette.line2,
+    overflow: 'hidden',
+    marginBottom: space.xs,
+  },
+  progressBarFill: {
+    height: '100%',
+    borderRadius: radius.sm,
+    backgroundColor: palette.accent,
+  },
+  practiceGoalSub: {
+    fontFamily: font.sansReg,
+    fontSize: 12.5,
+    color: palette.ink3,
+    marginTop: 2,
   },
 
   /* section */

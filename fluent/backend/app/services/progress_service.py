@@ -10,7 +10,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import SessionLog, SessionType, StreakRecord, User, VocabProgress
+from app.db.models import SessionLog, SessionType, StreakRecord, User, UserSettings, VocabProgress
 
 
 async def get_user_progress(db: AsyncSession, user_id: str) -> dict[str, Any]:
@@ -55,14 +55,17 @@ async def get_user_progress(db: AsyncSession, user_id: str) -> dict[str, Any]:
     )
     words_mastered: int = (await db.execute(mastered_q)).scalar_one()
 
-    # Goal: 30 min / day  → progress as a percentage
+    # Goal: daily_goal_minutes from settings / day  → progress as a percentage
+    settings_q = select(UserSettings.daily_goal_minutes).where(UserSettings.user_id == user_id)
+    goal_minutes: int = (await db.execute(settings_q)).scalar_one_or_none() or 30
+
     today_q = select(StreakRecord).where(
         StreakRecord.user_id == user_id,
         StreakRecord.date == today,
     )
     today_record = (await db.execute(today_q)).scalar_one_or_none()
     today_minutes = today_record.minutes_practiced if today_record else 0
-    goal_progress = min(round(today_minutes / 30 * 100), 100)
+    goal_progress = min(round(today_minutes / goal_minutes * 100), 100)
 
     return {
         "streak_days": user.streak_days,

@@ -21,7 +21,7 @@ import Button from '@/components/Button';
 import { palette, radius, space, shadow } from '@/theme/tokens';
 import { font } from '@/theme/typography';
 import { useStore } from '@/store/useStore';
-import { scheduleDailyReminders } from '@/utils/notifications';
+import { scheduleDailyReminders, requestNotificationPermissions } from '@/utils/notifications';
 
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
@@ -155,7 +155,16 @@ export default function ProfileScreen() {
     updateSettings({ daily_goal_minutes: mins });
   };
 
-  const toggleReminders = (val: boolean) => {
+  const toggleReminders = async (val: boolean) => {
+    if (val) {
+      const granted = await requestNotificationPermissions();
+      if (!granted) {
+        showToast('⚠️', 'Please enable notifications in system settings.');
+        setRemindersEnabled(false);
+        updateSettings({ reminders_enabled: false });
+        return;
+      }
+    }
     setRemindersEnabled(val);
     updateSettings({ reminders_enabled: val });
   };

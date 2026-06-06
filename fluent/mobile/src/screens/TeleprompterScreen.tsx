@@ -102,7 +102,7 @@ export default function TeleprompterScreen() {
   const teleScrollRef = useAnimatedRef<Animated.ScrollView>();
   const scrollYShared = useSharedValue(0);
   const [isScrolling, setIsScrolling] = useState(false);
-  const [wpm, setWpm] = useState(130); // Default speed in words-per-minute
+  const [wpm, setWpm] = useState(160); // Default speed in words-per-minute
 
   // Height state for boundary checking
   const [contentHeight, setContentHeight] = useState(0);
@@ -309,9 +309,27 @@ export default function TeleprompterScreen() {
     });
   };
 
+  const handleRetry = () => {
+    setResult(null);
+    resetScroll();
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+  };
+
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
-      <Header title="Pronunciation" />
+      <Header
+        title="Pronunciation"
+        right={
+          result ? (
+            <PressableScale onPress={handleRetry} style={styles.retryHeaderBtn}>
+              <Ionicons name="refresh" size={16} color="#FFFFFF" />
+              <Text style={styles.retryHeaderBtnText}>Retry</Text>
+            </PressableScale>
+          ) : (
+            <View style={styles.backSpacer} />
+          )
+        }
+      />
 
       <ScrollView
         contentContainerStyle={styles.content}
@@ -735,5 +753,23 @@ const styles = StyleSheet.create({
   },
   btnHalf: {
     flex: 1,
+  },
+  retryHeaderBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: space.sm + 2,
+    paddingVertical: space.xs - 2,
+    borderRadius: radius.md,
+    backgroundColor: palette.accent,
+    gap: 4,
+    ...shadow.card,
+  },
+  retryHeaderBtnText: {
+    color: '#FFFFFF',
+    fontFamily: font.sansMed,
+    fontSize: 12.5,
+  },
+  backSpacer: {
+    width: 42,
   },
 });

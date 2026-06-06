@@ -416,11 +416,27 @@ export const useStore = create<StoreState>((set, get) => ({
   fetchProgress: async () => {
     set({ isLoadingData: true });
     try {
-      const stats = await api.getProgress();
+      const [stats, user] = await Promise.all([
+        api.getProgress(),
+        api.getMe().catch(() => null),
+      ]);
       const trendsRes = await api.getTrends().catch(() => null);
 
       const mappedLevel =
         stats.level === 'intermediate' ? 7 : stats.level === 'advanced' ? 9 : 5;
+
+      let nameState = get().name;
+      let initialsState = get().initials;
+      if (user && user.name) {
+        nameState = user.name;
+        initialsState = user.name
+          .split(' ')
+          .filter(Boolean)
+          .map((n) => n[0])
+          .join('')
+          .slice(0, 2)
+          .toUpperCase() || 'US';
+      }
 
       set({
         streak: stats.streak_days,
@@ -436,6 +452,8 @@ export const useStore = create<StoreState>((set, get) => ({
         seriousnessScore: stats.seriousness_score ?? get().seriousnessScore,
         xp: stats.xp ?? get().xp,
         xpLevel: stats.xp_level ?? get().xpLevel,
+        name: nameState,
+        initials: initialsState,
         trends: {
           minutesDelta: trendsRes?.deltas?.minutes ?? 12,
           drillsDelta: trendsRes?.deltas?.drills ?? 8,

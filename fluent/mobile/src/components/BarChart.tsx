@@ -11,7 +11,6 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { palette, radius, space } from '@/theme/tokens';
 import { font } from '@/theme/typography';
 
-const DAYS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 const BAR_HEIGHT = 104;
 
 interface BarChartProps {
@@ -37,6 +36,14 @@ function Bar({ value, index, max }: { value: number; index: number; max: number 
     height: height.value * BAR_HEIGHT,
   }));
 
+  const getDayLabel = () => {
+    const DAYS_OF_WEEK = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+    const today = new Date();
+    const daysAgo = 6 - index;
+    const targetDate = new Date(today.getTime() - daysAgo * 24 * 60 * 60 * 1000);
+    return DAYS_OF_WEEK[targetDate.getDay()];
+  };
+
   return (
     <View style={styles.barCol}>
       <View style={styles.barTrack}>
@@ -59,7 +66,7 @@ function Bar({ value, index, max }: { value: number; index: number; max: number 
         </Animated.View>
       </View>
       <Text style={[styles.dayLabel, isToday && styles.dayLabelActive]}>
-        {DAYS[index]}
+        {getDayLabel()}
       </Text>
     </View>
   );
