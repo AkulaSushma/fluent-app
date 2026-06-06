@@ -1,6 +1,6 @@
 import { Platform } from 'react-native';
 
-const BASE_URL = 'https://de7d2d4aaf7f61.lhr.life/api/v1';
+const BASE_URL = 'https://fluent-app-production.up.railway.app/api/v1';
 
 /* ------------------------------------------------------------------ */
 /*  Token Storage & Headers                                            */
