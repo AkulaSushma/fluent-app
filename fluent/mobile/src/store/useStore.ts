@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import * as SecureStore from 'expo-secure-store';
 import { api, setAuthToken } from '../api/client';
 import type {
   FlashCard,
@@ -114,6 +115,9 @@ interface StoreState {
   isAuthenticated: boolean;
   isLoadingAuth: boolean;
   autoAuthenticate: () => Promise<void>;
+  login: (email: string, password: string) => Promise<void>;
+  register: (email: string, name: string, password: string) => Promise<void>;
+  logout: () => Promise<void>;
 
   /* general loading state */
   isLoadingData: boolean;
@@ -314,10 +318,14 @@ export const useStore = create<StoreState>((set, get) => ({
   autoAuthenticate: async () => {
     set({ isLoadingAuth: true });
     try {
-      // 1. Try to login
-      const res = await api.login('demo@fluent.app', 'demo123');
-      setAuthToken(res.access_token);
-      set({ token: res.access_token, isAuthenticated: true, isLoadingAuth: false });
+      const savedToken = await SecureStore.getItemAsync('user_token');
+      if (!savedToken) {
+        set({ token: null, isAuthenticated: false, isLoadingAuth: false });
+        return;
+      }
+      setAuthToken(savedToken);
+      set({ token: savedToken, isAuthenticated: true, isLoadingAuth: false });
+      
       // Fetch initial data in parallel
       await Promise.all([
         get().fetchProgress(),
@@ -329,35 +337,79 @@ export const useStore = create<StoreState>((set, get) => ({
         get().fetchAchievements(),
         get().fetchVocabThemes(),
         get().fetchGrammarTopics(),
-      ]);
+      ]).catch(err => {
+        console.error('Failed to pre-fetch user state on autoAuthenticate:', err);
+      });
     } catch (err: any) {
-      // 2. Register if the account doesn't exist
-      if (err.status === 401 || err.status === 404 || err.status === 0 || err.status === 422) {
-        try {
-          const regRes = await api.register('demo@fluent.app', 'Aarav Kapoor', 'demo123');
-          setAuthToken(regRes.access_token);
-          set({ token: regRes.access_token, isAuthenticated: true, isLoadingAuth: false });
-          // Fetch initial data in parallel
-          await Promise.all([
-            get().fetchProgress(),
-            get().fetchVocabDeck(),
-            get().fetchCurriculumToday(),
-            get().fetchXpState(),
-            get().fetchChallenges(),
-            get().fetchSettings(),
-            get().fetchAchievements(),
-            get().fetchVocabThemes(),
-            get().fetchGrammarTopics(),
-          ]);
-        } catch (regErr) {
-          console.error('Registration failed:', regErr);
-          set({ isLoadingAuth: false });
-        }
-      } else {
-        console.error('Login failed:', err);
-        set({ isLoadingAuth: false });
-      }
+      console.error('Auto authentication error:', err);
+      set({ token: null, isAuthenticated: false, isLoadingAuth: false });
     }
+  },
+
+  login: async (email, password) => {
+    set({ isLoadingData: true });
+    try {
+      const res = await api.login(email, password);
+      await SecureStore.setItemAsync('user_token', res.access_token);
+      setAuthToken(res.access_token);
+      set({ token: res.access_token, isAuthenticated: true, isLoadingData: false });
+      
+      // Pre-fetch all initial data
+      await Promise.all([
+        get().fetchProgress(),
+        get().fetchVocabDeck(),
+        get().fetchCurriculumToday(),
+        get().fetchXpState(),
+        get().fetchChallenges(),
+        get().fetchSettings(),
+        get().fetchAchievements(),
+        get().fetchVocabThemes(),
+        get().fetchGrammarTopics(),
+      ]);
+    } catch (err) {
+      set({ isLoadingData: false });
+      throw err;
+    }
+  },
+
+  register: async (email, name, password) => {
+    set({ isLoadingData: true });
+    try {
+      const res = await api.register(email, name, password);
+      await SecureStore.setItemAsync('user_token', res.access_token);
+      setAuthToken(res.access_token);
+      set({ token: res.access_token, isAuthenticated: true, isLoadingData: false });
+      
+      // Pre-fetch all initial data
+      await Promise.all([
+        get().fetchProgress(),
+        get().fetchVocabDeck(),
+        get().fetchCurriculumToday(),
+        get().fetchXpState(),
+        get().fetchChallenges(),
+        get().fetchSettings(),
+        get().fetchAchievements(),
+        get().fetchVocabThemes(),
+        get().fetchGrammarTopics(),
+      ]);
+    } catch (err) {
+      set({ isLoadingData: false });
+      throw err;
+    }
+  },
+
+  logout: async () => {
+    try {
+      await SecureStore.deleteItemAsync('user_token');
+    } catch (e) {
+      console.error('Failed to delete stored token:', e);
+    }
+    setAuthToken(null);
+    set({
+      token: null,
+      isAuthenticated: false,
+      userSettings: null,
+    });
   },
 
   /* fetch actions */

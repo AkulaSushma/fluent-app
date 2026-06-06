@@ -30,6 +30,7 @@ import ObjectNamingScreen from '../screens/ObjectNamingScreen';
 import TechArticleScreen from '../screens/TechArticleScreen';
 import TongueTwisterScreen from '../screens/TongueTwisterScreen';
 import CorporateCoachScreen from '../screens/CorporateCoachScreen';
+import LoginScreen from '../screens/LoginScreen';
 
 import { palette, radius, space, shadow, spring } from '../theme/tokens';
 import { font } from '../theme/typography';
@@ -389,19 +390,27 @@ function MainTabNavigator({ navigation }: any) {
 /* ------------------------------------------------------------------ */
 
 export default function RootNavigator() {
+  const isAuthenticated = useStore((s) => s.isAuthenticated);
+
   return (
     <Stack.Navigator screenOptions={{ headerShown: false, animation: 'slide_from_bottom' }}>
-      <Stack.Screen name="MainTabs" component={MainTabNavigator} />
-      <Stack.Screen name="VocabStack" component={VocabScreen} />
-      <Stack.Screen name="GrammarStack" component={GrammarNavigator} />
-      <Stack.Screen name="TeleprompterStack" component={TeleprompterScreen} />
-      <Stack.Screen name="ReviewStack" component={ReviewScreen} />
-      <Stack.Screen name="LearningPath" component={LearningPathScreen} />
-      <Stack.Screen name="TutorStack" component={TutorScreen} />
-      <Stack.Screen name="ObjectNamingStack" component={ObjectNamingScreen} />
-      <Stack.Screen name="TechArticle" component={TechArticleScreen} />
-      <Stack.Screen name="TongueTwister" component={TongueTwisterScreen} />
-      <Stack.Screen name="CorporateCoach" component={CorporateCoachScreen} />
+      {isAuthenticated ? (
+        <>
+          <Stack.Screen name="MainTabs" component={MainTabNavigator} />
+          <Stack.Screen name="VocabStack" component={VocabScreen} />
+          <Stack.Screen name="GrammarStack" component={GrammarNavigator} />
+          <Stack.Screen name="TeleprompterStack" component={TeleprompterScreen} />
+          <Stack.Screen name="ReviewStack" component={ReviewScreen} />
+          <Stack.Screen name="LearningPath" component={LearningPathScreen} />
+          <Stack.Screen name="TutorStack" component={TutorScreen} />
+          <Stack.Screen name="ObjectNamingStack" component={ObjectNamingScreen} />
+          <Stack.Screen name="TechArticle" component={TechArticleScreen} />
+          <Stack.Screen name="TongueTwister" component={TongueTwisterScreen} />
+          <Stack.Screen name="CorporateCoach" component={CorporateCoachScreen} />
+        </>
+      ) : (
+        <Stack.Screen name="Login" component={LoginScreen} />
+      )}
     </Stack.Navigator>
   );
 }

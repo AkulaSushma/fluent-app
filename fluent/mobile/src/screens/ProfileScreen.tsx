@@ -40,6 +40,7 @@ export default function ProfileScreen() {
     updateSettings,
     isLoadingData,
     showToast,
+    logout,
   } = useStore();
 
   const [loading, setLoading] = useState(true);
@@ -422,7 +423,13 @@ export default function ProfileScreen() {
         <Animated.View
           entering={FadeInDown.delay(200).springify().damping(18)}
         >
-          <PressableScale style={styles.signOutBtn}>
+          <PressableScale
+            onPress={async () => {
+              await logout();
+              showToast('👋', 'Signed out successfully.');
+            }}
+            style={styles.signOutBtn}
+          >
             <Text style={styles.signOutText}>Sign out</Text>
           </PressableScale>
         </Animated.View>

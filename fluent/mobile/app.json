@@ -1,8 +1,9 @@
 {
   "expo": {
-    "name": "Engura",
+    "name": "Fluent",
     "slug": "engura",
     "scheme": "engura",
+    "icon": "./assets/icon.png",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
@@ -18,6 +19,7 @@
       "package": "com.lingura.engura",
       "versionCode": 1,
       "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#F4F1EB"
       },
       "permissions": [
@@ -39,7 +41,8 @@
           "microphonePermission": "Allow Fluent to access your microphone for speech evaluation.",
           "recordAudioAndroid": true
         }
-      ]
+      ],
+      "expo-secure-store"
     ],
     "extra": {
       "eas": {

@@ -121,7 +121,7 @@ export default function GrammarScreen() {
     const fetchLesson = async () => {
       try {
         setIsLoading(true);
-        const res = await api.generateGrammarLesson(topicParam, levelParam.toLowerCase());
+        const res = await api.generateGrammarLesson(topicId || topicParam, levelParam.toLowerCase());
         if (active) {
           setLesson(res);
           setIsLoading(false);
@@ -138,7 +138,7 @@ export default function GrammarScreen() {
     return () => {
       active = false;
     };
-  }, [topicParam, levelParam]);
+  }, [topicId, topicParam, levelParam]);
 
   // Fetch grammar topics for Next Topic calculation if not already available
   useEffect(() => {

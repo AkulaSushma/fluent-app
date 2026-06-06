@@ -27,8 +27,12 @@ async def generate_grammar_lesson(topic: str, level: str = "advanced") -> dict:
 
     # Try loading from the pre-defined local library first for instantaneous load and zero AI cost
     try:
+        topic_id = topic.strip().lower()
+        if topic_id == "formal_vs_informal":
+            topic_id = "formal_informal"
+            
         from app.services.content_library import get_grammar_topic_by_id, get_grammar_lesson
-        lesson = get_grammar_topic_by_id(topic) or get_grammar_lesson(topic)
+        lesson = get_grammar_topic_by_id(topic_id) or get_grammar_lesson(topic_id)
         if lesson and "quiz" in lesson and lesson["quiz"]:
             _grammar_lessons_cache[cache_key] = lesson
             return lesson
@@ -124,6 +128,17 @@ async def generate_vocab_deck(theme: str, count: int = 8) -> dict:
     cache_key = f"{theme}:{count}"
     if cache_key in _vocab_decks_cache:
         return _vocab_decks_cache[cache_key]
+
+    # Try loading from the pre-defined local library first for instantaneous load and zero AI cost
+    try:
+        from app.services.content_library import get_vocab_deck
+        deck = get_vocab_deck(theme, count)
+        if deck and "cards" in deck and deck["cards"]:
+            _vocab_decks_cache[cache_key] = deck
+            return deck
+    except Exception as e:
+        import logging
+        logging.warning(f"Failed to load vocab deck '{theme}' from library: {e}")
 
     try:
         messages = [
@@ -248,6 +263,17 @@ async def generate_article(topic: str, level: str = "advanced", day: int | None 
     cache_key = f"{topic}:{level}:{day}"
     if cache_key in _articles_cache:
         return _articles_cache[cache_key]
+
+    # Try loading from the pre-defined local library first for instantaneous load and zero AI cost
+    try:
+        from app.services.content_library import get_article
+        article = get_article(level, day)
+        if article and "content" in article:
+            _articles_cache[cache_key] = article
+            return article
+    except Exception as e:
+        import logging
+        logging.warning(f"Failed to load article from library: {e}")
 
     try:
         messages = [
