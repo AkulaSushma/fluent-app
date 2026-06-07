@@ -62,6 +62,11 @@ app.include_router(api_router, prefix=API_PREFIX)
 
 # ── Health check ─────────────────────────────────────────────────────
 
+@app.get("/", tags=["health"])
+async def root():
+    return {"status": "ok", "message": "Fluent API is running"}
+
+
 @app.get("/health", tags=["health"])
 async def health():
     return {"status": "ok"}
