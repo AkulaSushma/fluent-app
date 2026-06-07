@@ -36,9 +36,9 @@ settings = Settings()
 # Clean DATABASE_URL for async compatibility (e.g. for Railway Postgres deployment)
 _db_url = settings.DATABASE_URL
 if _db_url.startswith("postgres://"):
-    _db_url = _db_url.replace("postgres://", "postgresql+asyncpg://", 1)
+    _db_url = _db_url.replace("postgres://", "postgresql+psycopg://", 1)
 elif _db_url.startswith("postgresql://"):
-    _db_url = _db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    _db_url = _db_url.replace("postgresql://", "postgresql+psycopg://", 1)
 elif _db_url.startswith("sqlite://") and not _db_url.startswith("sqlite+aiosqlite://"):
     _db_url = _db_url.replace("sqlite://", "sqlite+aiosqlite://", 1)
 settings.DATABASE_URL = _db_url
