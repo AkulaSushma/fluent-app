@@ -31,6 +31,14 @@ import TechArticleScreen from '../screens/TechArticleScreen';
 import TongueTwisterScreen from '../screens/TongueTwisterScreen';
 import CorporateCoachScreen from '../screens/CorporateCoachScreen';
 import LoginScreen from '../screens/LoginScreen';
+import LibraryScreen from '../screens/LibraryScreen';
+import BookReaderScreen from '../screens/BookReaderScreen';
+import JournalScreen from '../screens/JournalScreen';
+import CognitiveSrsScreen from '../screens/CognitiveSrsScreen';
+import StoryReaderScreen from '../screens/StoryReaderScreen';
+import ChallengeScreen from '../screens/ChallengeScreen';
+import FavoritesScreen from '../screens/FavoritesScreen';
+import WordFamiliesScreen from '../screens/WordFamiliesScreen';
 import { useStore } from '../store/useStore';
 
 import { palette, radius, space, shadow, spring } from '../theme/tokens';
@@ -151,6 +159,66 @@ function LearnMenuScreen({ navigation }: any) {
             <Text style={styles.learnEmoji}>🖼️</Text>
             <Text style={styles.learnCardTitle}>Object Naming</Text>
             <Text style={styles.learnCardSub}>Identify everyday advanced objects</Text>
+          </PressableScale>
+
+          {/* 9. Digital Library */}
+          <PressableScale
+            onPress={() => navigation.navigate('LibraryStack')}
+            style={[styles.learnCard, shadow.card]}
+          >
+            <Text style={styles.learnEmoji}>📚</Text>
+            <Text style={styles.learnCardTitle}>Digital Library</Text>
+            <Text style={styles.learnCardSub}>Read & discover word origins</Text>
+          </PressableScale>
+
+          {/* 10. Word Journal */}
+          <PressableScale
+            onPress={() => navigation.navigate('JournalStack')}
+            style={[styles.learnCard, shadow.card]}
+          >
+            <Text style={styles.learnEmoji}>📝</Text>
+            <Text style={styles.learnCardTitle}>Word Journal</Text>
+            <Text style={styles.learnCardSub}>Personal vocabulary reflections</Text>
+          </PressableScale>
+
+          {/* 11. Etymology Review */}
+          <PressableScale
+            onPress={() => navigation.navigate('CognitiveSrs')}
+            style={[styles.learnCard, shadow.card]}
+          >
+            <Text style={styles.learnEmoji}>🧬</Text>
+            <Text style={styles.learnCardTitle}>Etymology Review</Text>
+            <Text style={styles.learnCardSub}>Spaced repetition with word roots</Text>
+          </PressableScale>
+
+          {/* 12. 30-Day Challenges */}
+          <PressableScale
+            onPress={() => navigation.navigate('Challenge')}
+            style={[styles.learnCard, shadow.card]}
+          >
+            <Text style={styles.learnEmoji}>📅</Text>
+            <Text style={styles.learnCardTitle}>30-Day Challenges</Text>
+            <Text style={styles.learnCardSub}>Root mastery and emotions tracking</Text>
+          </PressableScale>
+
+          {/* 13. Favorite Words */}
+          <PressableScale
+            onPress={() => navigation.navigate('Favorites')}
+            style={[styles.learnCard, shadow.card]}
+          >
+            <Text style={styles.learnEmoji}>⭐</Text>
+            <Text style={styles.learnCardTitle}>Favorite Words</Text>
+            <Text style={styles.learnCardSub}>Your personal A-Z 100-word catalog</Text>
+          </PressableScale>
+
+          {/* 14. Word Families */}
+          <PressableScale
+            onPress={() => navigation.navigate('WordFamilies')}
+            style={[styles.learnCard, shadow.card]}
+          >
+            <Text style={styles.learnEmoji}>🌿</Text>
+            <Text style={styles.learnCardTitle}>Word Families</Text>
+            <Text style={styles.learnCardSub}>Explore roots and semantic intensities</Text>
           </PressableScale>
         </View>
       </ScrollView>
@@ -408,6 +476,14 @@ export default function RootNavigator() {
           <Stack.Screen name="TechArticle" component={TechArticleScreen} />
           <Stack.Screen name="TongueTwister" component={TongueTwisterScreen} />
           <Stack.Screen name="CorporateCoach" component={CorporateCoachScreen} />
+          <Stack.Screen name="LibraryStack" component={LibraryScreen} />
+          <Stack.Screen name="BookReader" component={BookReaderScreen} />
+          <Stack.Screen name="JournalStack" component={JournalScreen} />
+          <Stack.Screen name="CognitiveSrs" component={CognitiveSrsScreen} />
+          <Stack.Screen name="StoryReader" component={StoryReaderScreen} />
+          <Stack.Screen name="Challenge" component={ChallengeScreen} />
+          <Stack.Screen name="Favorites" component={FavoritesScreen} />
+          <Stack.Screen name="WordFamilies" component={WordFamiliesScreen} />
         </>
       ) : (
         <Stack.Screen name="Login" component={LoginScreen} />

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import * as SecureStore from 'expo-secure-store';
-import { api, setAuthToken } from '../api/client';
+import { api, setAuthToken, onUnauthorized } from '../api/client';
 import type {
   FlashCard,
   CurriculumTaskOut,
@@ -14,6 +14,16 @@ import type {
   GrammarTopicsResponse,
   GrammarQuizSubmission,
   GrammarQuizResult,
+  LibraryBookOut,
+  VocabularyNodeOut,
+  CognitiveSrsOut,
+  JournalEntryOut,
+  ThemeOut,
+  CognitiveChallengeOut,
+  UserChallengeProgressOut,
+  FavoriteEntryOut,
+  StoryMnemonicOut,
+  WordFamilyOut,
 } from '../api/client';
 
 /* ------------------------------------------------------------------ */
@@ -206,6 +216,37 @@ interface StoreState {
   confettiVisible: boolean;
   fireConfetti: () => void;
   clearConfetti: () => void;
+
+  /* cognitive engine */
+  libraryBooks: LibraryBookOut[];
+  activeEtymology: VocabularyNodeOut | null;
+  cognitiveSrsDue: CognitiveSrsOut[];
+  journalEntries: JournalEntryOut[];
+  themes: ThemeOut[];
+  cognitiveChallenges: CognitiveChallengeOut[];
+  challengeProgress: Record<string, UserChallengeProgressOut>;
+  favorites: FavoriteEntryOut[];
+  stories: StoryMnemonicOut[];
+  wordFamilies: WordFamilyOut[];
+
+  fetchLibrary: () => Promise<void>;
+  fetchEtymology: (word: string) => Promise<VocabularyNodeOut | null>;
+  enqueueCognitiveWord: (nodeId: string) => Promise<void>;
+  fetchCognitiveSrsDue: () => Promise<void>;
+  reviewCognitiveSrs: (nodeId: string, quality: number) => Promise<void>;
+  fetchJournal: () => Promise<void>;
+  createJournalEntry: (nodeId: string | null, sentence: string, emotionTag: string | null) => Promise<void>;
+  markJournalEntrySpoken: (journalId: string) => Promise<void>;
+  fetchThemes: () => Promise<void>;
+  fetchThemeFamilies: (themeId: string) => Promise<WordFamilyOut[]>;
+  fetchWordFamilies: () => Promise<void>;
+  fetchCognitiveChallenges: () => Promise<void>;
+  startChallenge: (challengeId: string) => Promise<UserChallengeProgressOut | null>;
+  completeChallengeDay: (challengeId: string, dayNum: number) => Promise<UserChallengeProgressOut | null>;
+  fetchFavorites: () => Promise<void>;
+  addFavorite: (word: string, letter: string, nodeId: string | null) => Promise<void>;
+  toggleFavoriteMastered: (entryId: string) => Promise<void>;
+  fetchStories: () => Promise<void>;
 }
 
 const scaleFluency = (score: number) => (score > 10 ? Math.round((score / 10) * 10) / 10 : score);
@@ -681,4 +722,206 @@ export const useStore = create<StoreState>((set, get) => ({
   confettiVisible: false,
   fireConfetti: () => set({ confettiVisible: true }),
   clearConfetti: () => set({ confettiVisible: false }),
+
+  /* cognitive engine state & actions */
+  libraryBooks: [],
+  activeEtymology: null,
+  cognitiveSrsDue: [],
+  journalEntries: [],
+  themes: [],
+  cognitiveChallenges: [],
+  challengeProgress: {},
+  favorites: [],
+  stories: [],
+  wordFamilies: [],
+
+  fetchLibrary: async () => {
+    try {
+      const books = await api.getCognitiveLibrary();
+      set({ libraryBooks: books });
+    } catch (err) {
+      console.error('Failed to fetch library:', err);
+    }
+  },
+
+  fetchEtymology: async (word: string) => {
+    try {
+      const node = await api.getWordEtymology(word);
+      set({ activeEtymology: node });
+      return node;
+    } catch (err) {
+      console.error('Failed to fetch etymology:', err);
+      set({ activeEtymology: null });
+      return null;
+    }
+  },
+
+  enqueueCognitiveWord: async (nodeId: string) => {
+    try {
+      await api.enqueueCognitiveWord(nodeId);
+      get().showToast('🧠', 'Word added to Memory Loop!');
+    } catch (err) {
+      console.error('Failed to enqueue word:', err);
+    }
+  },
+
+  fetchCognitiveSrsDue: async () => {
+    try {
+      const due = await api.getCognitiveSrsDue();
+      set({ cognitiveSrsDue: due });
+    } catch (err) {
+      console.error('Failed to fetch cognitive SRS due:', err);
+    }
+  },
+
+  reviewCognitiveSrs: async (nodeId: string, quality: number) => {
+    try {
+      await api.reviewCognitiveSrs(nodeId, quality);
+      const text = quality >= 3 ? 'Word advancing!' : 'Word reset to Day 1';
+      get().showToast(quality >= 3 ? '✅' : '🔄', text);
+      await get().fetchCognitiveSrsDue();
+    } catch (err) {
+      console.error('Failed to review cognitive SRS:', err);
+    }
+  },
+
+  fetchJournal: async () => {
+    try {
+      const entries = await api.getJournal();
+      set({ journalEntries: entries });
+    } catch (err) {
+      console.error('Failed to fetch journal:', err);
+    }
+  },
+
+  createJournalEntry: async (nodeId: string | null, sentence: string, emotionTag: string | null) => {
+    try {
+      await api.createJournalEntry(nodeId, sentence, emotionTag);
+      get().showToast('📝', 'Journal entry saved!');
+      await get().fetchJournal();
+    } catch (err) {
+      console.error('Failed to create journal entry:', err);
+    }
+  },
+
+  markJournalEntrySpoken: async (journalId: string) => {
+    try {
+      await api.markJournalEntrySpoken(journalId);
+      get().showToast('🗣️', 'Spoken aloud count updated!');
+      await get().fetchJournal();
+    } catch (err) {
+      console.error('Failed to mark journal entry as spoken:', err);
+    }
+  },
+
+  fetchThemes: async () => {
+    try {
+      const themes = await api.getThemes();
+      set({ themes });
+    } catch (err) {
+      console.error('Failed to fetch themes:', err);
+    }
+  },
+
+  fetchThemeFamilies: async (themeId: string) => {
+    try {
+      return await api.getThemeFamilies(themeId);
+    } catch (err) {
+      console.error('Failed to fetch theme families:', err);
+      return [];
+    }
+  },
+
+  fetchCognitiveChallenges: async () => {
+    try {
+      const challenges = await api.getCognitiveChallenges();
+      set({ cognitiveChallenges: challenges });
+    } catch (err) {
+      console.error('Failed to fetch challenges:', err);
+    }
+  },
+
+  startChallenge: async (challengeId: string) => {
+    try {
+      const prog = await api.startChallenge(challengeId);
+      set((state) => ({
+        challengeProgress: {
+          ...state.challengeProgress,
+          [challengeId]: prog,
+        },
+      }));
+      return prog;
+    } catch (err) {
+      console.error('Failed to start challenge:', err);
+      return null;
+    }
+  },
+
+  completeChallengeDay: async (challengeId: string, dayNum: number) => {
+    try {
+      const prog = await api.completeChallengeDay(challengeId, dayNum);
+      set((state) => ({
+        challengeProgress: {
+          ...state.challengeProgress,
+          [challengeId]: prog,
+        },
+      }));
+      get().showToast('🏆', `Day ${dayNum} completed!`);
+      return prog;
+    } catch (err) {
+      console.error('Failed to complete challenge day:', err);
+      return null;
+    }
+  },
+
+  fetchFavorites: async () => {
+    try {
+      const favorites = await api.getFavorites();
+      set({ favorites });
+    } catch (err) {
+      console.error('Failed to fetch favorites:', err);
+    }
+  },
+
+  addFavorite: async (word: string, letter: string, nodeId: string | null) => {
+    try {
+      await api.addFavorite(word, letter, nodeId);
+      get().showToast('⭐', `${word} added to Favorites!`);
+      await get().fetchFavorites();
+    } catch (err) {
+      console.error('Failed to add favorite:', err);
+    }
+  },
+
+  toggleFavoriteMastered: async (entryId: string) => {
+    try {
+      await api.toggleFavoriteMastered(entryId);
+      await get().fetchFavorites();
+    } catch (err) {
+      console.error('Failed to toggle favorite mastery:', err);
+    }
+  },
+
+  fetchStories: async () => {
+    try {
+      const stories = await api.getStories();
+      set({ stories });
+    } catch (err) {
+      console.error('Failed to fetch stories:', err);
+    }
+  },
+
+  fetchWordFamilies: async () => {
+    try {
+      const families = await api.getWordFamilies();
+      set({ wordFamilies: families });
+    } catch (err) {
+      console.error('Failed to fetch word families:', err);
+    }
+  },
 }));
+
+onUnauthorized(() => {
+  useStore.getState().logout();
+});
+

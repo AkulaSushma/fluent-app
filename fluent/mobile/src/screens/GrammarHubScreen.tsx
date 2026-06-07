@@ -1,35 +1,49 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
-  TouchableOpacity,
   ActivityIndicator,
   RefreshControl,
-  LayoutAnimation,
-  Platform,
-  UIManager,
   Dimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
-import Animated, { FadeInDown } from 'react-native-reanimated';
+import Animated, { FadeInDown, FadeInRight } from 'react-native-reanimated';
+import { LinearGradient } from 'expo-linear-gradient';
+import * as Haptics from 'expo-haptics';
 import Ionicons from '@expo/vector-icons/Ionicons';
 
 import Header from '@/components/Header';
-import Card from '@/components/Card';
-import PressableScale from '@/components/PressableScale';
 import ProgressRing from '@/components/ProgressRing';
-import { palette, radius, space, shadow } from '@/theme/tokens';
+import PressableScale from '@/components/PressableScale';
+import Button from '@/components/Button';
+import { palette, radius, space, shadow, spring as springCfg } from '@/theme/tokens';
 import { font } from '@/theme/typography';
 import { useStore } from '@/store/useStore';
 
 const { width: SCREEN_W } = Dimensions.get('window');
+const TOPIC_CARD_W = 160;
 
-if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
-  UIManager.setLayoutAnimationEnabledExperimental(true);
-}
+/* ─── level → colour mapping ──────────────────────────────── */
+
+const LEVEL_STYLES: Record<
+  string,
+  { bg: string; text: string; border?: string }
+> = {
+  Foundation: { bg: palette.accentSoft, text: palette.accent },
+  Intermediate: { bg: palette.amberSoft, text: palette.amber },
+  Advanced: { bg: '#FDF3E0', text: palette.gold },
+  Pro: { bg: palette.dark1, text: '#FFFFFF' },
+};
+
+const getLevelStyle = (label: string) =>
+  LEVEL_STYLES[label] ?? LEVEL_STYLES.Foundation;
+
+/* ═════════════════════════════════════════════════════════════
+   GrammarHubScreen
+   ═════════════════════════════════════════════════════════════ */
 
 export default function GrammarHubScreen() {
   const insets = useSafeAreaInsets();
@@ -38,9 +52,8 @@ export default function GrammarHubScreen() {
 
   const [isLoading, setIsLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [levelFilter, setLevelFilter] = useState<'All' | 'Foundation' | 'Intermediate' | 'Advanced' | 'Pro'>('All');
-  const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({});
 
+  /* ── data fetching ──────────────────────────────────────── */
   useEffect(() => {
     if (!grammarTopics) {
       setIsLoading(true);
@@ -54,60 +67,66 @@ export default function GrammarHubScreen() {
     setRefreshing(false);
   }, [fetchGrammarTopics]);
 
-  const toggleCategory = (catId: string) => {
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setCollapsedCategories((prev) => ({
-      ...prev,
-      [catId]: !prev[catId],
-    }));
-  };
+  /* ── navigation helpers ─────────────────────────────────── */
+  const handleTopicPress = useCallback(
+    (topic: { id: string; title: string; levelLabel: string; locked: boolean }) => {
+      if (topic.locked) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+        showToast('🔒', 'Complete previous lessons first');
+        return;
+      }
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      navigation.navigate('GrammarLesson', {
+        topicId: topic.id,
+        topic: topic.title,
+        level: topic.levelLabel,
+      });
+    },
+    [navigation, showToast],
+  );
 
-  const levelTabs: Array<'All' | 'Foundation' | 'Intermediate' | 'Advanced' | 'Pro'> = [
-    'All',
-    'Foundation',
-    'Intermediate',
-    'Advanced',
-    'Pro',
-  ];
-
-  // Process matching topics
-  const filteredCategories = useMemo(() => {
-    if (!grammarTopics?.categories) return [];
-    return grammarTopics.categories
-      .map((cat) => {
-        const matchingTopics = cat.topics.filter((topic) => {
-          if (levelFilter === 'All') return true;
-          return topic.levelLabel?.toLowerCase() === levelFilter.toLowerCase();
+  const handleContinueLearning = useCallback(() => {
+    if (!grammarTopics) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    // Find the first incomplete, unlocked topic
+    for (const cat of grammarTopics.categories) {
+      const next = cat.topics.find((t) => !t.completed && !t.locked);
+      if (next) {
+        navigation.navigate('GrammarLesson', {
+          topicId: next.id,
+          topic: next.title,
+          level: next.levelLabel,
         });
-        return {
-          ...cat,
-          topics: matchingTopics,
-        };
-      })
-      .filter((cat) => cat.topics.length > 0);
-  }, [grammarTopics, levelFilter]);
+        return;
+      }
+    }
+    showToast('🎉', 'All topics mastered!');
+  }, [grammarTopics, navigation, showToast]);
 
-  // Derived stats
-  const totalTopics = grammarTopics?.totalTopics || 0;
-  const topicsCompleted = grammarTopics?.topicsCompleted || 0;
-  const overallMastery = grammarTopics?.overallMastery || 0;
-  const estimatedXp = topicsCompleted * 50; // Approximated XP from grammar completed
+  /* ── derived stats ──────────────────────────────────────── */
+  const overallPct = grammarTopics ? Math.round(grammarTopics.overallMastery * 100) : 0;
+  const topicsCompleted = grammarTopics?.topicsCompleted ?? 0;
+  const totalTopics = grammarTopics?.totalTopics ?? 0;
 
+  /* ── loading state ──────────────────────────────────────── */
   if (isLoading && !grammarTopics) {
     return (
-      <View style={[styles.loadingScreen, { paddingTop: insets.top }]}>
-        <Header title="Grammar Engine" showBack={true} />
-        <View style={styles.loadingCenter}>
+      <View style={[styles.screen, { paddingTop: insets.top }]}>
+        <Header title="Grammar" showBack={true} />
+        <View style={styles.loaderCenter}>
           <ActivityIndicator size="large" color={palette.accent} />
-          <Text style={styles.loadingText}>Assembling grammar curriculum...</Text>
+          <Text style={styles.loaderText}>Loading grammar topics…</Text>
         </View>
       </View>
     );
   }
 
+  /* ═══════════════════════════════════════════════════════════
+     RENDER
+     ═══════════════════════════════════════════════════════════ */
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
-      <Header title="Grammar Engine" showBack={true} />
+      <Header title="Grammar" showBack={true} />
 
       <ScrollView
         contentContainerStyle={styles.scrollContent}
@@ -121,418 +140,376 @@ export default function GrammarHubScreen() {
           />
         }
       >
-        {/* Mastery Stats Strip */}
-        <Animated.View entering={FadeInDown.duration(500).springify()}>
-          <Card index={0} style={styles.statsCard}>
-            <View style={styles.statsHeader}>
-              <Text style={styles.statsTitle}>Grammar Mastery</Text>
-              <Text style={styles.statsSubtitle}>Track your syntax fluency</Text>
-            </View>
+        {/* ── Hero progress card ────────────────────────── */}
+        <Animated.View
+          entering={FadeInDown.delay(0)
+            .springify()
+            .damping(springCfg.damping)
+            .stiffness(springCfg.stiffness)
+            .mass(springCfg.mass)}
+        >
+          <LinearGradient
+            colors={[palette.dark1, palette.dark2]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={[styles.heroCard, shadow.raised]}
+          >
+            {/* decorative sheen */}
+            <View style={styles.heroSheen} />
 
-            <View style={styles.statsGrid}>
-              <View style={styles.statColumn}>
-                <Text style={styles.statNum}>{Math.round(overallMastery)}%</Text>
-                <Text style={styles.statLabel}>Avg Mastery</Text>
-              </View>
-              <View style={styles.statDivider} />
-              <View style={styles.statColumn}>
-                <Text style={styles.statNum}>
-                  {topicsCompleted}/{totalTopics}
+            <View style={styles.heroTop}>
+              {/* left column */}
+              <View style={styles.heroTextCol}>
+                <Text style={styles.heroKicker}>YOUR GRAMMAR JOURNEY</Text>
+                <Text style={styles.heroMastery}>{overallPct}%</Text>
+                <Text style={styles.heroSub}>
+                  {topicsCompleted} of {totalTopics} topics mastered
                 </Text>
-                <Text style={styles.statLabel}>Completed</Text>
               </View>
-              <View style={styles.statDivider} />
-              <View style={styles.statColumn}>
-                <Text style={styles.statNum}>{estimatedXp}</Text>
-                <Text style={styles.statLabel}>XP Earned</Text>
-              </View>
+
+              {/* right column — progress ring */}
+              <ProgressRing progress={grammarTopics?.overallMastery ?? 0} size={64} strokeWidth={5}>
+                <Ionicons name="school-outline" size={20} color="#FFFFFF" />
+              </ProgressRing>
             </View>
 
-            {/* Custom progress bar */}
-            <View style={styles.progressTrack}>
-              <View
-                style={[
-                  styles.progressFill,
-                  { width: `${totalTopics > 0 ? (topicsCompleted / totalTopics) * 100 : 0}%` },
-                ]}
-              />
-            </View>
-          </Card>
+            <Button
+              label="Continue Learning"
+              variant="light"
+              icon="→"
+              onPress={handleContinueLearning}
+              style={{ marginTop: space.xl }}
+            />
+          </LinearGradient>
         </Animated.View>
 
-        {/* Level Filters Horizontal Scroll */}
-        <View style={styles.filterOuter}>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.filterScroll}
+        {/* ── Category Sections ─────────────────────────── */}
+        {grammarTopics?.categories.map((category, catIdx) => (
+          <Animated.View
+            key={category.id}
+            entering={FadeInDown.delay(80 + catIdx * 80)
+              .springify()
+              .damping(springCfg.damping)
+              .stiffness(springCfg.stiffness)
+              .mass(springCfg.mass)}
+            style={styles.categorySection}
           >
-            {levelTabs.map((level) => {
-              const active = levelFilter === level;
-              return (
-                <TouchableOpacity
-                  key={level}
-                  onPress={() => setLevelFilter(level)}
-                  style={[
-                    styles.levelTab,
-                    active ? styles.levelTabActive : null,
-                  ]}
-                  activeOpacity={0.8}
-                >
-                  <Text style={[styles.levelTabText, active ? styles.levelTabTextActive : null]}>
-                    {level}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-        </View>
+            {/* section header */}
+            <View style={styles.catHeaderRow}>
+              <View style={styles.catTitleRow}>
+                <Text style={styles.catEmoji}>{category.emoji}</Text>
+                <Text style={styles.catLabel}>{category.label}</Text>
+              </View>
+              <View style={styles.catCountPill}>
+                <Text style={styles.catCountText}>
+                  {category.topics.length}
+                </Text>
+              </View>
+            </View>
 
-        {/* Categories List */}
-        {filteredCategories.length === 0 ? (
-          <Animated.View entering={FadeInDown.duration(400)} style={styles.emptyContainer}>
-            <Ionicons name="journal-outline" size={48} color={palette.ink3} />
-            <Text style={styles.emptyTitle}>No matching topics</Text>
-            <Text style={styles.emptySub}>
-              We couldn't find any {levelFilter !== 'All' ? `${levelFilter} ` : ''}grammar topics available right now.
-            </Text>
-          </Animated.View>
-        ) : (
-          filteredCategories.map((category, catIndex) => {
-            const isCollapsed = !!collapsedCategories[category.id];
-            return (
-              <Animated.View
-                key={category.id}
-                entering={FadeInDown.delay(100 + catIndex * 80)
-                  .springify()
-                  .damping(18)}
-                style={styles.categoryContainer}
-              >
-                {/* Category Accordion Header */}
-                <TouchableOpacity
-                  onPress={() => toggleCategory(category.id)}
-                  style={[styles.categoryHeader, shadow.card]}
-                  activeOpacity={0.9}
-                >
-                  <View style={styles.categoryTitleGroup}>
-                    <Text style={styles.categoryEmoji}>{category.emoji}</Text>
-                    <Text style={styles.categoryLabel}>{category.label}</Text>
-                  </View>
-                  <Ionicons
-                    name={isCollapsed ? 'chevron-down' : 'chevron-up'}
-                    size={20}
-                    color={palette.ink2}
-                  />
-                </TouchableOpacity>
+            {/* horizontal topic cards */}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.topicScroll}
+            >
+              {category.topics.map((topic, topicIdx) => {
+                const lvl = getLevelStyle(topic.levelLabel);
+                const masteryPct = Math.round(topic.mastery * 100);
 
-                {/* Topics Accordion Body */}
-                {!isCollapsed && (
-                  <View style={styles.topicsList}>
-                    {category.topics.map((topic, topicIndex) => {
-                      const isLocked = topic.locked;
+                return (
+                  <Animated.View
+                    key={topic.id}
+                    entering={FadeInRight.delay(160 + catIdx * 80 + topicIdx * 60)
+                      .springify()
+                      .damping(springCfg.damping)
+                      .stiffness(springCfg.stiffness)
+                      .mass(springCfg.mass)}
+                  >
+                    <PressableScale
+                      onPress={() => handleTopicPress(topic)}
+                      style={[
+                        styles.topicCard,
+                        shadow.card,
+                        topic.completed && styles.topicCardCompleted,
+                        topic.locked && styles.topicCardLocked,
+                      ]}
+                    >
+                      {/* completed green left accent */}
+                      {topic.completed && <View style={styles.completedBorder} />}
 
-                      // Level badge style selectors
-                      let badgeBg: string = palette.accentSoft;
-                      let badgeText: string = palette.accentInk;
-                      if (topic.levelLabel?.toLowerCase().includes('intermediate')) {
-                        badgeBg = '#EFF6FF';
-                        badgeText = '#1E40AF';
-                      } else if (topic.levelLabel?.toLowerCase().includes('advanced')) {
-                        badgeBg = '#F5F3FF';
-                        badgeText = '#5B21B6';
-                      } else if (topic.levelLabel?.toLowerCase().includes('pro')) {
-                        badgeBg = '#FEF3C7';
-                        badgeText = '#92400E';
-                      }
+                      {/* lock overlay */}
+                      {topic.locked && (
+                        <View style={styles.lockOverlay}>
+                          <View style={styles.lockCircle}>
+                            <Ionicons
+                              name="lock-closed"
+                              size={20}
+                              color={palette.ink3}
+                            />
+                          </View>
+                        </View>
+                      )}
 
-                      const handlePress = () => {
-                        if (isLocked) {
-                          showToast('🔒', 'Complete previous topics to unlock this one!');
-                        } else {
-                          navigation.navigate('GrammarLesson', {
-                            topicId: topic.id,
-                            topic: topic.title,
-                            level: topic.levelLabel,
-                          });
-                        }
-                      };
+                      {/* level badge */}
+                      <View
+                        style={[
+                          styles.levelBadge,
+                          { backgroundColor: lvl.bg },
+                        ]}
+                      >
+                        <Text style={[styles.levelBadgeText, { color: lvl.text }]}>
+                          {topic.levelLabel}
+                        </Text>
+                      </View>
 
-                      return (
-                        <PressableScale
-                          key={topic.id}
-                          onPress={handlePress}
-                          style={[
-                            styles.topicCard,
-                            isLocked ? styles.topicCardLocked : null,
-                            shadow.card,
-                          ]}
+                      {/* title */}
+                      <Text
+                        style={styles.topicTitle}
+                        numberOfLines={2}
+                      >
+                        {topic.title}
+                      </Text>
+
+                      {/* spacer pushes ring to bottom */}
+                      <View style={styles.topicSpacer} />
+
+                      {/* mini progress ring + percentage */}
+                      <View style={styles.topicFooter}>
+                        <ProgressRing
+                          progress={topic.mastery}
+                          size={32}
+                          strokeWidth={3}
                         >
-                          <View style={styles.topicCardLeft}>
-                            <Text style={styles.topicTitle} numberOfLines={2}>
-                              {topic.title}
-                            </Text>
-                            <View style={[styles.badge, { backgroundColor: badgeBg }]}>
-                              <Text style={[styles.badgeText, { color: badgeText }]}>
-                                {topic.levelLabel}
-                              </Text>
-                            </View>
-                          </View>
+                          <Text style={styles.topicPct}>{masteryPct}</Text>
+                        </ProgressRing>
+                        {topic.bestScore > 0 && (
+                          <Text style={styles.bestScoreLabel}>
+                            Best {Math.round(topic.bestScore)}%
+                          </Text>
+                        )}
+                      </View>
+                    </PressableScale>
+                  </Animated.View>
+                );
+              })}
+            </ScrollView>
+          </Animated.View>
+        ))}
 
-                          <View style={styles.topicCardRight}>
-                            {isLocked ? (
-                              <View style={styles.lockRing}>
-                                <Ionicons name="lock-closed" size={16} color={palette.ink3} />
-                              </View>
-                            ) : (
-                              <ProgressRing progress={topic.mastery / 100} size={38} strokeWidth={3}>
-                                <Text style={styles.masteryPercentageText}>
-                                  {Math.round(topic.mastery)}
-                                </Text>
-                              </ProgressRing>
-                            )}
-                          </View>
-                        </PressableScale>
-                      );
-                    })}
-                  </View>
-                )}
-              </Animated.View>
-            );
-          })
-        )}
-
-        <View style={{ height: 120 }} />
+        {/* bottom padding */}
+        <View style={{ height: 100 }} />
       </ScrollView>
     </View>
   );
 }
 
+/* ═════════════════════════════════════════════════════════════
+   STYLES
+   ═════════════════════════════════════════════════════════════ */
+
 const styles = StyleSheet.create({
+  /* ── screen scaffold ────────────────────────────────────── */
   screen: {
     flex: 1,
     backgroundColor: palette.paper,
   },
-  loadingScreen: {
-    flex: 1,
-    backgroundColor: palette.paper,
-  },
-  loadingCenter: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: space.xxl,
-  },
-  loadingText: {
-    fontFamily: font.serifMed,
-    fontSize: 16,
-    color: palette.ink2,
-    marginTop: space.lg,
-    textAlign: 'center',
-  },
   scrollContent: {
     paddingHorizontal: space.xl,
     paddingTop: space.sm,
+    gap: space.xl,
+  },
+  loaderCenter: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
     gap: space.lg,
   },
+  loaderText: {
+    fontFamily: font.sansReg,
+    fontSize: 14,
+    color: palette.ink3,
+  },
 
-  /* stats card */
-  statsCard: {
-    backgroundColor: palette.card,
+  /* ── hero card ──────────────────────────────────────────── */
+  heroCard: {
     borderRadius: radius.xl,
     padding: space.xl,
-  },
-  statsHeader: {
-    marginBottom: space.lg,
-  },
-  statsTitle: {
-    fontFamily: font.serifMed,
-    fontSize: 20,
-    color: palette.ink,
-  },
-  statsSubtitle: {
-    fontFamily: font.sansReg,
-    fontSize: 13,
-    color: palette.ink2,
-    marginTop: 2,
-  },
-  statsGrid: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: space.lg,
-  },
-  statColumn: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  statNum: {
-    fontFamily: font.serifBold,
-    fontSize: 22,
-    color: palette.ink,
-  },
-  statLabel: {
-    fontFamily: font.sansReg,
-    fontSize: 11,
-    color: palette.ink3,
-    marginTop: 4,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  statDivider: {
-    width: 1,
-    height: 30,
-    backgroundColor: palette.line,
-  },
-  progressTrack: {
-    height: 4,
-    backgroundColor: palette.line2,
-    borderRadius: radius.pill,
     overflow: 'hidden',
   },
-  progressFill: {
-    height: '100%',
+  heroSheen: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
     backgroundColor: palette.accent,
-    borderRadius: radius.pill,
+    opacity: 0.06,
+    borderRadius: radius.xl,
   },
-
-  /* filter tabs */
-  filterOuter: {
-    marginHorizontal: -space.xl,
-  },
-  filterScroll: {
-    paddingHorizontal: space.xl,
-    gap: space.sm,
-    paddingVertical: space.xs,
-  },
-  levelTab: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: radius.pill,
-    backgroundColor: palette.line2,
-    borderWidth: 1,
-    borderColor: palette.line,
-  },
-  levelTabActive: {
-    backgroundColor: palette.accent,
-    borderColor: palette.accent,
-  },
-  levelTabText: {
-    fontFamily: font.sansMed,
-    fontSize: 13,
-    color: palette.ink2,
-  },
-  levelTabTextActive: {
-    color: '#FFFFFF',
-    fontFamily: font.sansSemi,
-  },
-
-  /* categories accordion */
-  categoryContainer: {
-    gap: space.sm,
-  },
-  categoryHeader: {
+  heroTop: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: palette.card,
-    borderRadius: radius.md,
-    paddingVertical: space.md,
-    paddingHorizontal: space.lg,
-    borderWidth: 1,
-    borderColor: palette.line2,
   },
-  categoryTitleGroup: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  heroTextCol: {
+    flex: 1,
+    marginRight: space.lg,
+  },
+  heroKicker: {
+    fontFamily: font.sansBold,
+    fontSize: 9,
+    color: palette.accent2,
+    letterSpacing: 1.5,
+    marginBottom: space.xs,
+  },
+  heroMastery: {
+    fontFamily: font.serifBold,
+    fontSize: 34,
+    color: '#FFFFFF',
+    lineHeight: 40,
+  },
+  heroSub: {
+    fontFamily: font.sansReg,
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.6)',
+    marginTop: 2,
+  },
+
+  /* ── category section ───────────────────────────────────── */
+  categorySection: {
     gap: space.md,
   },
-  categoryEmoji: {
-    fontSize: 20,
-  },
-  categoryLabel: {
-    fontFamily: font.serifMed,
-    fontSize: 16,
-    color: palette.ink,
-  },
-
-  /* topics list */
-  topicsList: {
-    gap: space.sm,
-    paddingLeft: space.xs,
-  },
-  topicCard: {
+  catHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: palette.card,
-    borderRadius: radius.md,
-    padding: space.lg,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.7)',
   },
-  topicCardLocked: {
-    opacity: 0.55,
-    backgroundColor: palette.line2,
-  },
-  topicCardLeft: {
-    flex: 1,
-    gap: space.xs,
-    paddingRight: space.md,
-  },
-  topicTitle: {
-    fontFamily: font.serifReg,
-    fontSize: 15,
-    color: palette.ink,
-    lineHeight: 20,
-  },
-  badge: {
-    alignSelf: 'flex-start',
-    paddingVertical: 2,
-    paddingHorizontal: 8,
-    borderRadius: radius.sm,
-  },
-  badgeText: {
-    fontFamily: font.sansSemi,
-    fontSize: 10,
-    textTransform: 'uppercase',
-    letterSpacing: 0.4,
-  },
-  topicCardRight: {
+  catTitleRow: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-  },
-  lockRing: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: palette.line,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  masteryPercentageText: {
-    fontFamily: font.sansBold,
-    fontSize: 10,
-    color: palette.ink,
-  },
-
-  /* empty state */
-  emptyContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: space.xxl * 2,
     gap: space.sm,
   },
-  emptyTitle: {
+  catEmoji: {
+    fontSize: 20,
+  },
+  catLabel: {
     fontFamily: font.serifMed,
     fontSize: 18,
     color: palette.ink,
-    marginTop: space.sm,
   },
-  emptySub: {
+  catCountPill: {
+    backgroundColor: palette.accentSoft,
+    paddingHorizontal: space.sm,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+    minWidth: 28,
+    alignItems: 'center',
+  },
+  catCountText: {
+    fontFamily: font.sansBold,
+    fontSize: 11,
+    color: palette.accent,
+  },
+
+  /* ── horizontal scroll ──────────────────────────────────── */
+  topicScroll: {
+    paddingRight: space.xl,
+    gap: space.md,
+  },
+
+  /* ── topic card ─────────────────────────────────────────── */
+  topicCard: {
+    width: TOPIC_CARD_W,
+    backgroundColor: palette.card,
+    borderRadius: radius.xl,
+    padding: space.lg,
+    borderWidth: 1,
+    borderColor: palette.line2,
+    overflow: 'hidden',
+    minHeight: 170,
+  },
+  topicCardCompleted: {
+    borderColor: palette.line2,
+  },
+  topicCardLocked: {
+    opacity: 0.45,
+  },
+
+  /* green left accent for completed cards */
+  completedBorder: {
+    position: 'absolute',
+    left: 0,
+    top: space.lg,
+    bottom: space.lg,
+    width: 3,
+    backgroundColor: palette.accent,
+    borderTopRightRadius: 2,
+    borderBottomRightRadius: 2,
+  },
+
+  /* lock overlay */
+  lockOverlay: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    zIndex: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  lockCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: palette.line2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  /* level badge */
+  levelBadge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: space.sm,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+    marginBottom: space.sm,
+  },
+  levelBadgeText: {
+    fontFamily: font.sansBold,
+    fontSize: 9,
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+  },
+
+  /* topic text */
+  topicTitle: {
+    fontFamily: font.serifMed,
+    fontSize: 14,
+    color: palette.ink,
+    lineHeight: 19,
+  },
+
+  topicSpacer: {
+    flex: 1,
+    minHeight: space.md,
+  },
+
+  /* topic footer */
+  topicFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+  },
+  topicPct: {
+    fontFamily: font.sansBold,
+    fontSize: 8,
+    color: palette.accent,
+  },
+  bestScoreLabel: {
     fontFamily: font.sansReg,
-    fontSize: 13,
-    color: palette.ink2,
-    textAlign: 'center',
-    paddingHorizontal: space.xxl,
+    fontSize: 10,
+    color: palette.ink3,
   },
 });

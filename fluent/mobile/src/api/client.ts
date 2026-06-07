@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 
-const BASE_URL = 'https://fluent-app-production.up.railway.app/api/v1';
+const FALLBACK = 'http://192.168.1.100:8000/api/v1';
+export const BASE_URL = (process.env.EXPO_PUBLIC_API_URL || FALLBACK).replace(/\/+$/, '');
 
 /* ------------------------------------------------------------------ */
 /*  Token Storage & Headers                                            */
@@ -14,6 +15,12 @@ export function setAuthToken(token: string | null) {
 
 export function getAuthToken() {
   return authToken;
+}
+
+let onUnauthorizedCallback: (() => void) | null = null;
+
+export function onUnauthorized(callback: () => void) {
+  onUnauthorizedCallback = callback;
 }
 
 /* ------------------------------------------------------------------ */
@@ -394,6 +401,147 @@ export interface CorporatePhrasesResponse {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Cognitive Engine Types                                             */
+/* ------------------------------------------------------------------ */
+
+export interface EtymologyPartOut {
+  id: string;
+  part_type: 'prefix' | 'root' | 'suffix';
+  morpheme: string;
+  meaning: string;
+  domain: string | null;
+  example_word: string | null;
+}
+
+export interface ThemeOut {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  icon: string | null;
+  accent_color: string | null;
+}
+
+export interface VocabularyNodeOut {
+  id: string;
+  word: string;
+  definition: string | null;
+  difficulty: number;
+  visual_url: string | null;
+  context_sentence: string | null;
+  root: EtymologyPartOut | null;
+  prefix: EtymologyPartOut | null;
+  suffix: EtymologyPartOut | null;
+  word_family_name: string | null;
+  mnemonic_text: string | null;
+  mnemonic_image_url: string | null;
+  intensity: number | null;
+  theme_id: string | null;
+  synonyms: string[];
+  antonyms: string[];
+}
+
+export interface WordFamilyOut {
+  id: string;
+  name: string;
+  theme: string | null;
+  theme_id: string | null;
+  base_meaning: string | null;
+  fluency_tier: string | null;
+  words: VocabularyNodeOut[];
+}
+
+export interface LibraryBookOut {
+  id: string;
+  title: string;
+  author: string | null;
+  track: 'mastery' | 'storytelling';
+  cover_url: string | null;
+  content_url: string | null;
+  is_public_domain: boolean;
+  accent_color: string;
+  sort_order: number;
+  description: string | null;
+  chapter_count: number;
+}
+
+export interface CognitiveSrsOut {
+  id: string;
+  vocabulary_node_id: string;
+  stage: number;
+  next_review_at: string;
+  last_reviewed_at: string | null;
+  total_reviews: number;
+  total_lapses: number;
+  ease_factor: number;
+  repetitions: number;
+  interval_days: number;
+  word: VocabularyNodeOut | null;
+}
+
+export interface JournalEntryOut {
+  id: string;
+  vocabulary_node_id: string | null;
+  personal_sentence: string;
+  emotion_tag: string | null;
+  source: string;
+  created_at: string;
+  spoken_aloud: boolean;
+  spoken_at: string | null;
+  word: VocabularyNodeOut | null;
+}
+
+export interface StoryWordLinkOut {
+  node_id: string;
+  highlighted_phrase: string | null;
+  node: VocabularyNodeOut | null;
+}
+
+export interface StoryMnemonicOut {
+  id: string;
+  title: string;
+  body: string;
+  is_system: boolean;
+  links: StoryWordLinkOut[];
+}
+
+export interface FavoriteEntryOut {
+  id: string;
+  list_id: string;
+  node_id: string | null;
+  word: string;
+  letter: string;
+  mastered: boolean;
+  node: VocabularyNodeOut | null;
+}
+
+export interface ChallengeDayOut {
+  id: string;
+  day_number: number;
+  root_part_ids: string[];
+}
+
+export interface CognitiveChallengeOut {
+  id: string;
+  title: string;
+  subtitle: string | null;
+  total_days: number;
+  daily_minutes: number;
+  theme_id: string | null;
+  days: ChallengeDayOut[];
+}
+
+export interface UserChallengeProgressOut {
+  id: string;
+  challenge_id: string;
+  current_day: number;
+  completed_days: number[];
+  started_at: string;
+  last_active: string | null;
+}
+
+
+/* ------------------------------------------------------------------ */
 /*  Error                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -450,7 +598,14 @@ async function request<T>(
   try {
     const res = await fetch(url, { ...opts, headers });
     const json = await res.json().catch(() => null);
-    if (!res.ok) throw new ApiError(res.status, json);
+    if (!res.ok) {
+      if (res.status === 401) {
+        if (onUnauthorizedCallback) {
+          onUnauthorizedCallback();
+        }
+      }
+      throw new ApiError(res.status, json);
+    }
 
     // Save successful GET requests to cache
     if (isGet) {
@@ -705,4 +860,90 @@ export const api = {
 
   getCorporatePhrases: () =>
     request<CorporatePhrasesResponse>('/coach/corporate-phrases'),
+
+  /* cognitive engine */
+  getCognitiveLibrary: () =>
+    request<LibraryBookOut[]>('/cognitive/library'),
+
+  getCognitiveBook: (bookId: string) =>
+    request<LibraryBookOut>(`/cognitive/library/${bookId}`),
+
+  getWordEtymology: (word: string) =>
+    request<VocabularyNodeOut | null>(`/cognitive/etymology/${encodeURIComponent(word)}`),
+
+  getWordFamilies: () =>
+    request<WordFamilyOut[]>('/cognitive/word-families'),
+
+  getCognitiveSrsDue: (limit: number = 20) =>
+    request<CognitiveSrsOut[]>(`/cognitive/srs/due?limit=${limit}`),
+
+  reviewCognitiveSrs: (nodeId: string, quality: number) =>
+    request<CognitiveSrsOut>('/cognitive/srs/review', {
+      method: 'POST',
+      body: JSON.stringify({ node_id: nodeId, quality }),
+    }),
+
+  enqueueCognitiveWord: (nodeId: string) =>
+    request<CognitiveSrsOut>('/cognitive/srs/enqueue', {
+      method: 'POST',
+      body: JSON.stringify({ node_id: nodeId }),
+    }),
+
+  getJournal: () =>
+    request<JournalEntryOut[]>('/cognitive/journal'),
+
+  createJournalEntry: (vocabularyNodeId: string | null, personalSentence: string, emotionTag: string | null, source: string = 'manual') =>
+    request<JournalEntryOut>('/cognitive/journal', {
+      method: 'POST',
+      body: JSON.stringify({
+        vocabulary_node_id: vocabularyNodeId,
+        personal_sentence: personalSentence,
+        emotion_tag: emotionTag,
+        source,
+      }),
+    }),
+
+  markJournalEntrySpoken: (journalId: string) =>
+    request<JournalEntryOut>(`/cognitive/journal/${journalId}/spoken`, {
+      method: 'POST',
+    }),
+
+  getThemes: () =>
+    request<ThemeOut[]>('/cognitive/themes'),
+
+  getThemeFamilies: (themeId: string) =>
+    request<WordFamilyOut[]>(`/cognitive/themes/${themeId}/families`),
+
+  getCognitiveChallenges: () =>
+    request<CognitiveChallengeOut[]>('/cognitive/challenges'),
+
+  startChallenge: (challengeId: string) =>
+    request<UserChallengeProgressOut>(`/cognitive/challenges/${challengeId}/start`, {
+      method: 'POST',
+    }),
+
+  completeChallengeDay: (challengeId: string, dayNum: number) =>
+    request<UserChallengeProgressOut>(`/cognitive/challenges/${challengeId}/day/${dayNum}/complete`, {
+      method: 'POST',
+    }),
+
+  getFavorites: () =>
+    request<FavoriteEntryOut[]>('/cognitive/favorites'),
+
+  addFavorite: (word: string, letter: string, nodeId: string | null) =>
+    request<FavoriteEntryOut>('/cognitive/favorites', {
+      method: 'POST',
+      body: JSON.stringify({ word, letter, node_id: nodeId }),
+    }),
+
+  toggleFavoriteMastered: (entryId: string) =>
+    request<FavoriteEntryOut>(`/cognitive/favorites/${entryId}/master`, {
+      method: 'POST',
+    }),
+
+  getStories: () =>
+    request<StoryMnemonicOut[]>('/cognitive/stories'),
+
+  getStory: (storyId: string) =>
+    request<StoryMnemonicOut>(`/cognitive/stories/${storyId}`),
 } as const;

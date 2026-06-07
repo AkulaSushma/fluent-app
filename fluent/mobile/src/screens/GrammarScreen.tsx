@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -12,14 +12,9 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
   FadeIn,
-  FadeOut,
   FadeInRight,
   FadeInDown,
-  useSharedValue,
-  useAnimatedStyle,
-  withTiming,
-  withDelay,
-  Easing,
+  FadeOut,
 } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
@@ -35,64 +30,20 @@ import { palette, radius, space, shadow } from '@/theme/tokens';
 import { font } from '@/theme/typography';
 import { useStore } from '@/store/useStore';
 import { api } from '@/api/client';
-import type { GrammarLessonResponse, GrammarTimeline } from '@/api/client';
+import type { GrammarLessonResponse } from '@/api/client';
+
+// Signature Components
+import RiverOfTime from '@/components/grammar/RiverOfTime';
+import CameraFlip from '@/components/grammar/CameraFlip';
+import BranchingUniverse from '@/components/grammar/BranchingUniverse';
+import SentenceSurgery from '@/components/grammar/SentenceSurgery';
+import AskMayaModal from '@/components/grammar/AskMayaModal';
 
 const { width: SCREEN_W } = Dimensions.get('window');
+const CARD_W = SCREEN_W - space.xl * 2;
 
-/* ------------------------------------------------------------------ */
-/*  Timeline Component                                                 */
-/* ------------------------------------------------------------------ */
-function AnimatedTimeline({ timeline }: { timeline?: GrammarTimeline }) {
-  const width = useSharedValue(0);
-  const dotScale = useSharedValue(0);
+type ActiveTab = 'learn' | 'practice' | 'quick_ref' | 'challenge';
 
-  useEffect(() => {
-    width.value = withDelay(
-      300,
-      withTiming(100, { duration: 1000, easing: Easing.out(Easing.cubic) }),
-    );
-    dotScale.value = withDelay(
-      1200,
-      withTiming(1, { duration: 400, easing: Easing.out(Easing.back(1.5)) }),
-    );
-  }, [timeline]);
-
-  const lineStyle = useAnimatedStyle(() => ({
-    width: `${width.value}%` as any,
-  }));
-
-  const dotStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: dotScale.value }],
-  }));
-
-  return (
-    <View style={styles.timelineContainer}>
-      <Text style={styles.timelineTitle}>Tense Timeline</Text>
-      <View style={styles.timelineTrack}>
-        <Animated.View style={[styles.timelineFill, lineStyle]}>
-          <LinearGradient
-            colors={[palette.accent, palette.accent2]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
-            style={StyleSheet.absoluteFill}
-          />
-        </Animated.View>
-        <Animated.View style={[styles.timelineDot, dotStyle]}>
-          <View style={styles.timelineDotInner} />
-        </Animated.View>
-      </View>
-      <View style={styles.timelineLabels}>
-        <Text style={styles.timelineLabel}>{timeline?.label_left || 'Past'}</Text>
-        <Text style={styles.timelineMarker}>{timeline?.marker || 'Now'}</Text>
-        <Text style={styles.timelineLabel}>{timeline?.label_right || 'Future'}</Text>
-      </View>
-    </View>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  Main Screen                                                        */
-/* ------------------------------------------------------------------ */
 export default function GrammarScreen() {
   const insets = useSafeAreaInsets();
   const route = useRoute<any>();
@@ -102,20 +53,54 @@ export default function GrammarScreen() {
   const topicParam = route.params?.topic || 'Present Perfect vs Past Simple';
   const levelParam = route.params?.level || 'intermediate';
 
-  const { showToast, fireConfetti, submitGrammarQuiz, grammarTopics, fetchGrammarTopics } = useStore();
+  const {
+    showToast,
+    fireConfetti,
+    submitGrammarQuiz,
+    grammarTopics,
+    fetchGrammarTopics,
+  } = useStore();
 
+  // Primary Lesson Data
   const [lesson, setLesson] = useState<GrammarLessonResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [phase, setPhase] = useState<number>(1); // 1: Concept, 2: Examples, 3: Mistakes, 4: Quiz, 5: Summary
+  const lessonStartTime = useRef<number>(0);
 
-  // Quiz States
-  const [currentQuestionIdx, setCurrentQuestionIdx] = useState(0);
+  // Tab State
+  const [activeTab, setActiveTab] = useState<ActiveTab>('learn');
+
+  // LEARN Tab States
+  const learnScrollRef = useRef<ScrollView>(null);
+  const [activeLearnCardIdx, setActiveLearnCardIdx] = useState(0);
+  const [exampleTranslationVisible, setExampleTranslationVisible] = useState<Record<number, boolean>>({});
+  const [mistakeExplanationVisible, setMistakeExplanationVisible] = useState<Record<number, boolean>>({});
+
+  // PRACTICE Tab States
+  const [currentQuizIdx, setCurrentQuizIdx] = useState(0);
   const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
   const [correctCount, setCorrectCount] = useState(0);
-  const [xpAwarded, setXpAwarded] = useState<number>(0);
-  const quizStartTime = useRef<number>(0);
+  const [practiceCompletedOnce, setPracticeCompletedOnce] = useState(false);
+  const [isQuizFinished, setIsQuizFinished] = useState(false);
+  const [mayaModalVisible, setMayaModalVisible] = useState(false);
+  const [xpAwarded, setXpAwarded] = useState(0);
+  const [masteryScore, setMasteryScore] = useState(0);
 
-  // Fetch lesson details
+  // Formula interactive states
+  const [selectedFormulaPart, setSelectedFormulaPart] = useState<string | null>(null);
+  const [activeHighlightRole, setActiveHighlightRole] = useState<string | null>(null);
+
+  // CHALLENGE Tab States
+  // challengeState can be: 'idle' | 'countdown' | 'playing' | 'gameover'
+  const [challengeState, setChallengeState] = useState<'idle' | 'countdown' | 'playing' | 'gameover'>('idle');
+  const [challengeCountdown, setChallengeCountdown] = useState(3);
+  const [challengeTimer, setChallengeTimer] = useState(60);
+  const [challengeQuestionIdx, setChallengeQuestionIdx] = useState(0);
+  const [challengeScore, setChallengeScore] = useState(0);
+  const [challengeStreak, setChallengeStreak] = useState(0);
+  const [challengeBestStreak, setChallengeBestStreak] = useState(0);
+  const [challengeSelectedAnswer, setChallengeSelectedAnswer] = useState<number | null>(null);
+
+  // Fetch lesson details on mount
   useEffect(() => {
     let active = true;
     const fetchLesson = async () => {
@@ -125,6 +110,7 @@ export default function GrammarScreen() {
         if (active) {
           setLesson(res);
           setIsLoading(false);
+          lessonStartTime.current = Date.now();
         }
       } catch (err) {
         console.error('Failed to generate grammar lesson:', err);
@@ -140,59 +126,119 @@ export default function GrammarScreen() {
     };
   }, [topicId, topicParam, levelParam]);
 
-  // Fetch grammar topics for Next Topic calculation if not already available
+  // Fetch grammar topics for locking status and user states
   useEffect(() => {
     if (!grammarTopics) {
       fetchGrammarTopics();
     }
   }, [grammarTopics, fetchGrammarTopics]);
 
-  // Compute Next Unlocked Topic
-  const nextTopic = useMemo(() => {
-    if (!grammarTopics?.categories) return null;
-    const allTopics = grammarTopics.categories.flatMap((c) => c.topics);
-    const currentIndex = allTopics.findIndex((t) => t.id === topicId || t.title === topicParam);
-    if (currentIndex === -1) return null;
-    for (let i = currentIndex + 1; i < allTopics.length; i++) {
-      if (!allTopics[i].locked) {
-        return allTopics[i];
+  // Determine unlock status of Challenge mode
+  const isTopicCompleted = useMemo(() => {
+    if (!grammarTopics) return false;
+    for (const cat of grammarTopics.categories) {
+      const topicObj = cat.topics.find((t) => t.id === topicId || t.title === lesson?.topic);
+      if (topicObj && topicObj.completed) return true;
+    }
+    return false;
+  }, [grammarTopics, topicId, lesson]);
+
+  const isChallengeUnlocked = isTopicCompleted || practiceCompletedOnce;
+
+  // Challenge Mode Timer Effect
+  useEffect(() => {
+    let intervalId: any = null;
+
+    if (challengeState === 'countdown') {
+      intervalId = setInterval(() => {
+        setChallengeCountdown((prev) => {
+          if (prev <= 1) {
+            setChallengeState('playing');
+            setChallengeTimer(60);
+            return 3;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    } else if (challengeState === 'playing') {
+      intervalId = setInterval(() => {
+        setChallengeTimer((prev) => {
+          if (prev <= 1) {
+            setChallengeState('gameover');
+            fireConfetti();
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [challengeState]);
+
+  // Token highlighter utility for See It In Action
+  const getRoleColor = (role: string) => {
+    const r = role.toLowerCase();
+    if (r.includes('subject')) return palette.accent;
+    if (r.includes('verb') || r.includes('tense')) return palette.amber;
+    if (r.includes('object') || r.includes('noun')) return palette.gold;
+    if (r.includes('negation') || r.includes('not')) return '#C75450';
+    return palette.ink;
+  };
+
+  // Formula parser utility
+  const parsedFormula = useMemo(() => {
+    if (!lesson?.formula) return [];
+    // Split by operator '+' and spaces while capturing bracket structure
+    const parts = lesson.formula.split(/(\s*\+\s*)/);
+    return parts.map((part) => {
+      const trimmed = part.trim();
+      if (trimmed === '+') {
+        return { isOperator: true, text: '+' };
       }
+      if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+        return { isCapsule: true, text: trimmed.substring(1, trimmed.length - 1) };
+      }
+      return { isText: true, text: trimmed };
+    });
+  }, [lesson?.formula]);
+
+  // Tab switching helper
+  const handleTabChange = (tab: ActiveTab) => {
+    if (tab === 'challenge' && !isChallengeUnlocked) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      showToast('🔒', 'Unlock Challenge by completing Practice once!');
+      return;
     }
-    return null;
-  }, [grammarTopics, topicId, topicParam]);
+    setActiveTab(tab);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  };
 
-  const handleNextTopic = () => {
-    if (nextTopic) {
-      setPhase(1);
-      setCurrentQuestionIdx(0);
-      setSelectedAnswer(null);
-      setCorrectCount(0);
-      setXpAwarded(0);
-      navigation.replace('GrammarLesson', {
-        topicId: nextTopic.id,
-        topic: nextTopic.title,
-        level: nextTopic.levelLabel,
-      });
+  // LEARN Tab Navigation
+  const handleLearnScroll = (event: any) => {
+    const xOffset = event.nativeEvent.contentOffset.x;
+    const index = Math.round(xOffset / SCREEN_W);
+    if (index >= 0 && index < 5 && index !== activeLearnCardIdx) {
+      setActiveLearnCardIdx(index);
     }
   };
 
-  const handleReviewTopic = () => {
-    setPhase(1);
-    setCurrentQuestionIdx(0);
-    setSelectedAnswer(null);
-    setCorrectCount(0);
-    setXpAwarded(0);
+  const jumpToLearnPage = (index: number) => {
+    if (index < 0 || index > 4) return;
+    learnScrollRef.current?.scrollTo({ x: index * SCREEN_W, animated: true });
+    setActiveLearnCardIdx(index);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
-  const handleBackToHub = () => {
-    navigation.navigate('Grammar');
-  };
-
+  // PRACTICE Quiz Helpers
   const handleSelectQuizAnswer = (idx: number) => {
     if (selectedAnswer !== null || !lesson) return;
     setSelectedAnswer(idx);
 
-    const question = lesson.quiz[currentQuestionIdx];
+    const question = lesson.quiz[currentQuizIdx];
     const isCorrect = idx === question.answer;
 
     if (isCorrect) {
@@ -205,69 +251,283 @@ export default function GrammarScreen() {
 
   const handleQuizNext = async () => {
     if (!lesson) return;
-    const isLastQuestion = currentQuestionIdx === lesson.quiz.length - 1;
+    const isLastQuestion = currentQuizIdx === lesson.quiz.length - 1;
 
     if (isLastQuestion) {
-      // Calculate elapsed time
-      const elapsed = (Date.now() - quizStartTime.current) / 1000;
       setIsLoading(true);
+      const elapsed = (Date.now() - lessonStartTime.current) / 1000;
 
-      const result = await submitGrammarQuiz({
-        topic_id: topicId || lesson.topic,
-        correct_count: correctCount,
-        total_questions: lesson.quiz.length,
-        time_spent_seconds: Math.round(elapsed),
-      });
+      try {
+        const result = await submitGrammarQuiz({
+          topic_id: topicId || lesson.topic,
+          correct_count: correctCount,
+          total_questions: lesson.quiz.length,
+          time_spent_seconds: Math.round(elapsed),
+        });
 
-      setIsLoading(false);
-
-      if (result) {
-        setXpAwarded(result.xp_awarded);
-      } else {
-        const fallbackXp = correctCount === lesson.quiz.length ? 50 : correctCount >= 4 ? 25 : 10;
-        setXpAwarded(fallbackXp);
-        if (correctCount >= 4) {
-          fireConfetti();
+        if (result) {
+          setXpAwarded(result.xp_awarded);
+          setMasteryScore(Math.round(result.new_mastery * 100));
+        } else {
+          const scorePct = Math.round((correctCount / lesson.quiz.length) * 100);
+          setXpAwarded(scorePct >= 80 ? 50 : 25);
+          setMasteryScore(scorePct);
         }
-      }
 
-      await api.logSession('grammar', Math.round(elapsed), Math.round((correctCount / lesson.quiz.length) * 100));
-      setPhase(5);
+        setPracticeCompletedOnce(true);
+        setIsQuizFinished(true);
+        fireConfetti();
+      } catch (err) {
+        console.error('Quiz submission error:', err);
+        showToast('⚠️', 'Could not save score, displaying estimate.');
+        const scorePct = Math.round((correctCount / lesson.quiz.length) * 100);
+        setXpAwarded(scorePct >= 80 ? 50 : 25);
+        setMasteryScore(scorePct);
+        setPracticeCompletedOnce(true);
+        setIsQuizFinished(true);
+      } finally {
+        setIsLoading(false);
+      }
     } else {
-      setCurrentQuestionIdx((idx) => idx + 1);
+      setCurrentQuizIdx((idx) => idx + 1);
       setSelectedAnswer(null);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
   };
 
-  const handleStartQuiz = () => {
-    setPhase(4);
-    quizStartTime.current = Date.now();
+  const handleResetQuiz = () => {
+    setCurrentQuizIdx(0);
+    setSelectedAnswer(null);
+    setCorrectCount(0);
+    setIsQuizFinished(false);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
   };
 
+  // CHALLENGE Tab Helpers
+  const handleStartChallenge = () => {
+    setChallengeState('countdown');
+    setChallengeCountdown(3);
+    setChallengeScore(0);
+    setChallengeStreak(0);
+    setChallengeBestStreak(0);
+    setChallengeQuestionIdx(0);
+    setChallengeSelectedAnswer(null);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+  };
+
+  const handleSelectChallengeAnswer = (idx: number) => {
+    if (challengeSelectedAnswer !== null || !lesson) return;
+    setChallengeSelectedAnswer(idx);
+
+    const question = lesson.quiz[challengeQuestionIdx];
+    const isCorrect = idx === question.answer;
+
+    if (isCorrect) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      const nextStreak = challengeStreak + 1;
+      setChallengeStreak(nextStreak);
+      if (nextStreak > challengeBestStreak) {
+        setChallengeBestStreak(nextStreak);
+      }
+      const multiplier = nextStreak >= 6 ? 3 : nextStreak >= 3 ? 2 : 1;
+      setChallengeScore((s) => s + 10 * multiplier);
+
+      // Snappy auto-advance for correct answers (300ms)
+      setTimeout(() => {
+        advanceChallengeQuestion();
+      }, 300);
+    } else {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      setChallengeStreak(0);
+
+      // Slower auto-advance for errors to show correction (800ms)
+      setTimeout(() => {
+        advanceChallengeQuestion();
+      }, 800);
+    }
+  };
+
+  const advanceChallengeQuestion = () => {
+    if (!lesson) return;
+    setChallengeSelectedAnswer(null);
+    setChallengeQuestionIdx((prev) => (prev + 1) % lesson.quiz.length);
+  };
+
+  const getFormulaPartExplanation = (part: string) => {
+    const p = part.toLowerCase().trim();
+    if (p.includes('subject')) return 'The actor or doer of the sentence (e.g. "I", "She", "The developer", "We").';
+    if (p.includes('verb-ing')) return 'Continuous or ongoing action form of the verb (e.g. "working", "deploying", "running").';
+    if (p.includes('am/is/are')) return 'Present tense auxiliary verb matching the subject (e.g. "I am", "He/She is", "They are").';
+    if (p.includes('have/has')) return 'Auxiliary verb showing completed present action (e.g. "I have worked", "She has deployed").';
+    if (p.includes('had')) return 'Past auxiliary showing an action completed before another past event (e.g. "We had backed up").';
+    if (p.includes('will')) return 'Future auxiliary indicating a promise, decision, or prediction (e.g. "We will test").';
+    if (p.includes('v3') || p.includes('past participle')) return 'Perfect form of the verb (e.g. "written", "deployed", "seen").';
+    if (p.includes('v2') || p.includes('past verb')) return 'Simple past action completed in the past (e.g. "wrote", "ran", "crashed").';
+    if (p.includes('object') || p.includes('noun')) return 'The recipient of the action or name of an entity (e.g. "the code", "London").';
+    if (p.includes('modal')) return 'Expresses permission, ability, or obligation (e.g. "can", "should", "must", "might").';
+    if (p.includes('auxiliary')) return 'Helping verb used to form tenses or voices (e.g. "was", "were", "do", "does").';
+    if (p.includes('was/were')) return 'Past tense auxiliary verb matching the subject (e.g. "I was", "They were").';
+    return `Grammatical structure component: "${part}". Essential building block for this grammar concept.`;
+  };
+
+  const renderFormulaLayout = () => {
+    if (!lesson?.formula) return null;
+
+    const subFormulas = lesson.formula.split('|');
+
+    return (
+      <View style={styles.formulaLinesContainer}>
+        {subFormulas.map((sub, subIdx) => {
+          const trimmedSub = sub.trim();
+          if (!trimmedSub) return null;
+
+          let label = '';
+          let restOfFormula = trimmedSub;
+          const colonIdx = trimmedSub.indexOf(':');
+          if (colonIdx > 0 && colonIdx < 30) {
+            label = trimmedSub.substring(0, colonIdx).trim();
+            restOfFormula = trimmedSub.substring(colonIdx + 1).trim();
+          }
+
+          const parts = restOfFormula.split(/(\s*\+\s*|\s*,\s*|\s*->\s*)/g);
+
+          return (
+            <View key={subIdx} style={styles.formulaLine}>
+              {label ? (
+                <View style={styles.formulaLabelBadge}>
+                  <Text style={styles.formulaLabelText}>{label.toUpperCase()}</Text>
+                </View>
+              ) : null}
+
+              <View style={styles.formulaElementsWrap}>
+                {parts.map((part, partIdx) => {
+                  const trimmedPart = part.trim();
+                  if (!trimmedPart) return null;
+
+                  const isOperator = trimmedPart === '+' || trimmedPart === ',' || trimmedPart === '->';
+
+                  if (isOperator) {
+                    return (
+                      <Text key={partIdx} style={styles.formulaOperatorText}>
+                        {trimmedPart === '->' ? '➔' : trimmedPart}
+                      </Text>
+                    );
+                  }
+
+                  const partLower = trimmedPart.toLowerCase();
+                  let bgColor: string = palette.accentSoft;
+                  let textColor: string = palette.accent;
+
+                  if (partLower.includes('subject')) {
+                    bgColor = '#EBF4F5';
+                    textColor = '#2A7A8C';
+                  } else if (partLower.includes('verb') || partLower.includes('v2') || partLower.includes('v3') || partLower.includes('gerund') || partLower.includes('infinitive')) {
+                    bgColor = palette.amberSoft;
+                    textColor = palette.amber;
+                  } else if (partLower.includes('object') || partLower.includes('noun')) {
+                    bgColor = '#FDF3E0';
+                    textColor = palette.gold;
+                  } else if (partLower.includes('modal') || partLower.includes('auxiliary') || partLower.includes('pronoun')) {
+                    bgColor = '#F0EEFC';
+                    textColor = '#6554C0';
+                  }
+
+                  const isHighlighted = activeHighlightRole === partLower || partLower.includes(activeHighlightRole || '____');
+
+                  return (
+                    <TouchableOpacity
+                      key={partIdx}
+                      activeOpacity={0.7}
+                      onPress={() => {
+                        setSelectedFormulaPart(trimmedPart);
+                        setActiveHighlightRole(prev => prev === partLower ? null : partLower);
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      }}
+                      style={[
+                        styles.formulaCapsule,
+                        { backgroundColor: bgColor },
+                        isHighlighted && {
+                          borderWidth: 1.5,
+                          borderColor: textColor,
+                          shadowColor: textColor,
+                          shadowOpacity: 0.2,
+                          shadowRadius: 4,
+                          elevation: 2,
+                        }
+                      ]}
+                    >
+                      <Text style={[styles.formulaCapsuleText, { color: textColor }]}>
+                        {trimmedPart}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+          );
+        })}
+      </View>
+    );
+  };
+
+  // Determine signature visualization component
+  const renderSignatureComponent = () => {
+    if (!lesson) return null;
+    const topicLower = (topicId || lesson.topic).toLowerCase();
+
+    if (
+      topicLower.includes('tense') ||
+      topicLower.includes('present') ||
+      topicLower.includes('past') ||
+      topicLower.includes('future') ||
+      topicLower.includes('perfect')
+    ) {
+      let shape = 'pulse';
+      if (topicLower.includes('past_simple')) shape = 'dot';
+      else if (topicLower.includes('past_continuous')) shape = 'line';
+      else if (topicLower.includes('past_perfect')) shape = 'two_dots';
+      else if (topicLower.includes('present_perfect')) shape = 'arrow_now';
+      else if (topicLower.includes('future_perfect')) shape = 'future_two_dots';
+      else if (topicLower.includes('future_perfect_continuous')) shape = 'future_line_to_dot';
+
+      return <RiverOfTime shape={shape} labelLeft="Past" labelRight="Future" marker="Now" />;
+    }
+
+    if (topicLower.includes('passive') || topicLower.includes('voice')) {
+      return (
+        <CameraFlip
+          subject="The developer"
+          verb="deployed"
+          object="the microservice"
+        />
+      );
+    }
+
+    if (topicLower.includes('conditional')) {
+      return <BranchingUniverse />;
+    }
+
+    const surgeryData =
+      lesson.examples?.[0]?.tokens?.map((tok) => ({
+        word: tok.text,
+        role: (tok.role.charAt(0).toUpperCase() + tok.role.slice(1)) as any,
+        explanation: `Grammatical role: ${tok.role} in sentence construction.`,
+      })) || [];
+
+    return <SentenceSurgery sentenceData={surgeryData.length > 0 ? surgeryData : undefined} />;
+  };
+
+  // Loading Screen
   if (isLoading || !lesson) {
     return (
       <View style={[styles.loadingScreen, { paddingTop: insets.top }]}>
         <Header title="Grammar Engine" showBack={true} />
         <View style={styles.loadingCenter}>
           <ActivityIndicator size="large" color={palette.accent} />
-          <Text style={styles.loadingText}>Synthesizing custom interactive grammar lesson...</Text>
+          <Text style={styles.loadingText}>Synthesizing cognitive learning system...</Text>
         </View>
       </View>
     );
-  }
-
-  // Choose level badge styles
-  let badgeBg: string = palette.accentSoft;
-  let badgeText: string = palette.accentInk;
-  if (lesson.levelLabel?.toLowerCase().includes('intermediate')) {
-    badgeBg = '#EFF6FF';
-    badgeText = '#1E40AF';
-  } else if (lesson.levelLabel?.toLowerCase().includes('advanced')) {
-    badgeBg = '#F5F3FF';
-    badgeText = '#5B21B6';
-  } else if (lesson.levelLabel?.toLowerCase().includes('pro')) {
-    badgeBg = '#FEF3C7';
-    badgeText = '#92400E';
   }
 
   return (
@@ -275,404 +535,748 @@ export default function GrammarScreen() {
       <Header title="Grammar Engine" showBack={true} />
       <Confetti />
 
-      {/* PHASE 1: Concept Introduction */}
-      {phase === 1 && (
-        <Animated.View
-          key="phase-concept"
-          entering={FadeInRight.duration(400)}
-          exiting={FadeOut.duration(200)}
-          style={styles.flexOne}
-        >
-          <ScrollView
-            contentContainerStyle={styles.scrollContent}
-            showsVerticalScrollIndicator={false}
+      {/* ── Tabs Navigation Pill Bar ─────────────────────────── */}
+      <View style={styles.tabsContainer}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabsScroll}>
+          <TouchableOpacity
+            style={[styles.tabButton, activeTab === 'learn' && styles.tabActiveButton]}
+            onPress={() => handleTabChange('learn')}
           >
-            <View style={styles.titleContainer}>
-              <Text style={styles.conceptTitle}>{lesson.topic}</Text>
-              <View style={[styles.badge, { backgroundColor: badgeBg }]}>
-                <Text style={[styles.badgeText, { color: badgeText }]}>{lesson.levelLabel}</Text>
-              </View>
-            </View>
+            <Text style={[styles.tabButtonText, activeTab === 'learn' && styles.tabActiveButtonText]}>Learn</Text>
+          </TouchableOpacity>
 
-            {/* Monospace Formula Card */}
-            <Card index={0} style={styles.formulaCard}>
-              <Text style={styles.formulaLabel}>STRUCTURE FORMULA</Text>
-              <Text style={styles.formulaText}>{lesson.formula}</Text>
-            </Card>
-
-            {/* Timeline (if exists) */}
-            {lesson.timeline && <AnimatedTimeline timeline={lesson.timeline} />}
-
-            {/* Core Rule & Explanation */}
-            <View style={styles.explanationSection}>
-              <Text style={styles.ruleLargeText}>{lesson.rule}</Text>
-              <Text style={styles.explanationText}>{lesson.explanation}</Text>
-            </View>
-
-            {/* Horizontal Swipeable Tip Cards */}
-            {lesson.tipCards && lesson.tipCards.length > 0 && (
-              <View style={styles.tipsSection}>
-                <Text style={styles.sectionTitle}>Key Tips</Text>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.tipsScroll}
-                  snapToInterval={SCREEN_W - space.xl * 2 + space.md}
-                  decelerationRate="fast"
-                >
-                  {lesson.tipCards.map((tip, idx) => (
-                    <View key={idx} style={[styles.tipCard, shadow.card]}>
-                      <Text style={styles.tipEmoji}>{tip.emoji || '💡'}</Text>
-                      <Text style={styles.tipCardTitle}>{tip.title}</Text>
-                      <Text style={styles.tipCardBody}>{tip.body}</Text>
-                    </View>
-                  ))}
-                </ScrollView>
-              </View>
-            )}
-
-            <View style={{ height: 120 }} />
-          </ScrollView>
-
-          {/* Floating Dock Continue Button */}
-          <View style={styles.dock}>
-            <LinearGradient
-              colors={['rgba(244, 241, 235, 0)', 'rgba(244, 241, 235, 0.95)', 'rgba(244, 241, 235, 1)']}
-              style={styles.dockGradient}
-            />
-            <View style={styles.dockButtonWrapper}>
-              <Button label="Continue  →" onPress={() => setPhase(2)} variant="accent" />
-            </View>
-          </View>
-        </Animated.View>
-      )}
-
-      {/* PHASE 2: Interactive Examples */}
-      {phase === 2 && (
-        <Animated.View
-          key="phase-examples"
-          entering={FadeInRight.duration(400)}
-          exiting={FadeOut.duration(200)}
-          style={styles.flexOne}
-        >
-          <ScrollView
-            contentContainerStyle={styles.scrollContent}
-            showsVerticalScrollIndicator={false}
+          <TouchableOpacity
+            style={[styles.tabButton, activeTab === 'practice' && styles.tabActiveButton]}
+            onPress={() => handleTabChange('practice')}
           >
-            <View style={styles.phaseHeader}>
-              <Text style={styles.phaseKicker}>PHASE 2 OF 5</Text>
-              <Text style={styles.phaseTitle}>Interactive Examples</Text>
-              <Text style={styles.phaseSubtitle}>Analyze how these sentences are formed</Text>
-            </View>
+            <Text style={[styles.tabButtonText, activeTab === 'practice' && styles.tabActiveButtonText]}>Practice</Text>
+          </TouchableOpacity>
 
-            {lesson.examples.map((example, idx) => (
-              <Card key={idx} index={idx} style={styles.exampleCard}>
-                <Text style={styles.exampleSentence}>{example.sentence}</Text>
-
-                {/* Token Pills Row */}
-                <View style={styles.tokensRow}>
-                  {example.tokens.map((tok, tIdx) => {
-                    let pillBg: string = palette.line2;
-                    let pillText: string = palette.ink2;
-                    const role = tok.role.toLowerCase();
-
-                    if (role.includes('subject')) {
-                      pillBg = '#E9EFEA';
-                      pillText = palette.accentInk;
-                    } else if (role.includes('verb') || role.includes('tense')) {
-                      pillBg = '#F6EADB';
-                      pillText = palette.amber;
-                    }
-
-                    return (
-                      <View key={tIdx} style={[styles.tokenPill, { backgroundColor: pillBg }]}>
-                        <Text style={[styles.tokenLabelText, { color: pillText }]}>{tok.text}</Text>
-                        <Text style={styles.tokenRoleText}>{tok.role}</Text>
-                      </View>
-                    );
-                  })}
-                </View>
-
-                {example.translation_hint ? (
-                  <Text style={styles.translationText}>"{example.translation_hint}"</Text>
-                ) : null}
-
-                <View style={styles.exampleDivider} />
-                <Text style={styles.exampleNote}>{example.note}</Text>
-              </Card>
-            ))}
-
-            <View style={{ height: 120 }} />
-          </ScrollView>
-
-          {/* Floating Dock Continue Button */}
-          <View style={styles.dock}>
-            <LinearGradient
-              colors={['rgba(244, 241, 235, 0)', 'rgba(244, 241, 235, 0.95)', 'rgba(244, 241, 235, 1)']}
-              style={styles.dockGradient}
-            />
-            <View style={styles.dockButtonWrapper}>
-              <Button label="Continue  →" onPress={() => setPhase(3)} variant="accent" />
-            </View>
-          </View>
-        </Animated.View>
-      )}
-
-      {/* PHASE 3: Common Mistakes */}
-      {phase === 3 && (
-        <Animated.View
-          key="phase-mistakes"
-          entering={FadeInRight.duration(400)}
-          exiting={FadeOut.duration(200)}
-          style={styles.flexOne}
-        >
-          <ScrollView
-            contentContainerStyle={styles.scrollContent}
-            showsVerticalScrollIndicator={false}
+          <TouchableOpacity
+            style={[styles.tabButton, activeTab === 'quick_ref' && styles.tabActiveButton]}
+            onPress={() => handleTabChange('quick_ref')}
           >
-            <View style={styles.phaseHeader}>
-              <Text style={styles.phaseKicker}>PHASE 3 OF 5</Text>
-              <Text style={styles.phaseTitle}>Watch Out! ⚠️</Text>
-              <Text style={styles.phaseSubtitle}>Common mistakes to spot and avoid</Text>
-            </View>
+            <Text style={[styles.tabButtonText, activeTab === 'quick_ref' && styles.tabActiveButtonText]}>Quick Ref</Text>
+          </TouchableOpacity>
 
-            {lesson.commonMistakes.map((mistake, idx) => (
-              <Card key={idx} index={idx} style={styles.mistakeCard}>
-                {/* Incorrect Row */}
-                <View style={styles.mistakeRowWrong}>
-                  <Ionicons name="close-circle" size={20} color="#EF4444" style={styles.mistakeIcon} />
-                  <View style={styles.mistakeSentenceCol}>
-                    <Text style={styles.mistakeSentenceWrong}>{mistake.wrong}</Text>
-                    <Text style={styles.mistakeLabelWrong}>INCORRECT</Text>
-                  </View>
-                </View>
+          <TouchableOpacity
+            style={[
+              styles.tabButton,
+              activeTab === 'challenge' && styles.tabActiveButton,
+              !isChallengeUnlocked && styles.tabLockedButton,
+            ]}
+            onPress={() => handleTabChange('challenge')}
+          >
+            {!isChallengeUnlocked && <Ionicons name="lock-closed" size={10} color={palette.ink3} style={{ marginRight: 4 }} />}
+            <Text
+              style={[
+                styles.tabButtonText,
+                activeTab === 'challenge' && styles.tabActiveButtonText,
+                !isChallengeUnlocked && { color: palette.ink3 },
+              ]}
+            >
+              Challenge
+            </Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </View>
 
-                {/* Correct Row */}
-                <View style={styles.mistakeRowRight}>
-                  <Ionicons name="checkmark-circle" size={20} color={palette.accent} style={styles.mistakeIcon} />
-                  <View style={styles.mistakeSentenceCol}>
-                    <Text style={styles.mistakeSentenceRight}>{mistake.right}</Text>
-                    <Text style={styles.mistakeLabelRight}>CORRECT</Text>
-                  </View>
-                </View>
-
-                {/* Explanation */}
-                <View style={styles.mistakeExplanationContainer}>
-                  <Text style={styles.mistakeExplanation}>{mistake.explanation}</Text>
-                </View>
-              </Card>
-            ))}
-
-            <View style={{ height: 120 }} />
-          </ScrollView>
-
-          {/* Floating Dock Start Quiz Button */}
-          <View style={styles.dock}>
-            <LinearGradient
-              colors={['rgba(244, 241, 235, 0)', 'rgba(244, 241, 235, 0.95)', 'rgba(244, 241, 235, 1)']}
-              style={styles.dockGradient}
-            />
-            <View style={styles.dockButtonWrapper}>
-              <Button label="Start Quiz  →" onPress={handleStartQuiz} variant="accent" />
-            </View>
-          </View>
-        </Animated.View>
-      )}
-
-      {/* PHASE 4: Practice Quiz */}
-      {phase === 4 && (
-        <Animated.View
-          key="phase-quiz"
-          entering={FadeInRight.duration(400)}
-          exiting={FadeOut.duration(200)}
-          style={styles.flexOne}
-        >
-          {(() => {
-            const quizQuestions = lesson.quiz || [];
-            const question = quizQuestions[currentQuestionIdx];
-
-            if (!question) {
-              return (
-                <View style={styles.emptyQuiz}>
-                  <Text style={styles.emptyQuizText}>No practice questions available for this topic.</Text>
-                  <Button label="Complete Lesson" onPress={() => setPhase(5)} variant="accent" />
-                </View>
-              );
-            }
-
-            const totalQ = quizQuestions.length;
-            const progress = (currentQuestionIdx / totalQ) * 100;
-            const hasAnswered = selectedAnswer !== null;
-
-            return (
-              <View style={styles.flexOne}>
-                <ScrollView
-                  contentContainerStyle={styles.scrollContent}
-                  showsVerticalScrollIndicator={false}
-                >
-                  {/* Progress Header */}
-                  <View style={styles.quizHeader}>
-                    <Text style={styles.quizProgressText}>
-                      Question {currentQuestionIdx + 1} of {totalQ}
-                    </Text>
-                    <View style={styles.quizProgressBarTrack}>
-                      <View style={[styles.quizProgressBarFill, { width: `${progress}%` }]} />
-                    </View>
+      {/* ── Tab 1: LEARN (Swipeable Concept Cards) ────────────── */}
+      {activeTab === 'learn' && (
+        <Animated.View entering={FadeIn} style={styles.tabContentContainer}>
+          <ScrollView contentContainerStyle={styles.learnScrollContainer} showsVerticalScrollIndicator={false}>
+            
+            <ScrollView
+              ref={learnScrollRef}
+              horizontal
+              pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              onScroll={handleLearnScroll}
+              scrollEventThrottle={16}
+              contentContainerStyle={styles.horizontalScrollContent}
+            >
+              {/* CARD 1: What Is It? */}
+              <View style={styles.conceptCardContainer}>
+                <View style={[styles.premiumCard, shadow.card]}>
+                  <View style={styles.cardIndicatorRow}>
+                    <Text style={styles.cardIndicatorText}>CONCEPT BLUEPRINT</Text>
+                    <Ionicons name="book-outline" size={16} color={palette.accent} />
                   </View>
 
-                  {/* Question Title */}
-                  <Card index={0} style={styles.quizCard}>
-                    <Text style={styles.quizQuestionText}>{question.q}</Text>
-                  </Card>
+                  <Text style={styles.conceptTitle}>{lesson.topic}</Text>
+                  <Text style={styles.conceptRule}>{lesson.rule}</Text>
+                  
+                  <View style={styles.blueprintDivider} />
 
-                  {/* Options */}
-                  <View style={styles.quizOptionsCol}>
-                    {question.options.map((opt, idx) => {
-                      const isSelected = selectedAnswer === idx;
-                      const isCorrect = idx === question.answer;
+                  <Text style={styles.sectionLabel}>STRUCTURE FORMULA (TAP COMPONENTS TO HIGHLIGHT)</Text>
+                  <View style={styles.formulaBox}>
+                    {renderFormulaLayout()}
+                  </View>
 
-                      let optionBorder: string = palette.line;
-                      let optionBg: string = palette.card;
-                      let optionText: string = palette.ink;
-                      let icon = null;
-
-                      if (hasAnswered) {
-                        if (isCorrect) {
-                          optionBorder = palette.accent;
-                          optionBg = palette.accentSoft;
-                          optionText = palette.accentInk;
-                          icon = <Ionicons name="checkmark-circle" size={20} color={palette.accent} />;
-                        } else if (isSelected) {
-                          optionBorder = '#EF4444';
-                          optionBg = '#FEF2F2';
-                          optionText = '#B91C1C';
-                          icon = <Ionicons name="close-circle" size={20} color="#EF4444" />;
-                        } else {
-                          optionBorder = palette.line2;
-                          optionBg = palette.card;
-                          optionText = palette.ink3;
-                        }
-                      } else if (isSelected) {
-                        optionBorder = palette.accent;
-                      }
-
-                      return (
+                  {/* Dynamic Cognitive Explanation Tooltip */}
+                  {selectedFormulaPart && (
+                    <Animated.View entering={FadeInDown} style={styles.tooltipCard}>
+                      <View style={styles.tooltipHeader}>
+                        <Ionicons name="bulb" size={14} color={palette.amber} />
+                        <Text style={styles.tooltipTitle}>{selectedFormulaPart.toUpperCase()}</Text>
                         <TouchableOpacity
-                          key={idx}
-                          disabled={hasAnswered}
-                          onPress={() => handleSelectQuizAnswer(idx)}
-                          style={[
-                            styles.quizOptionBtn,
-                            { borderColor: optionBorder, backgroundColor: optionBg },
-                            shadow.card,
-                          ]}
-                          activeOpacity={0.8}
+                          style={styles.closeTooltipBtn}
+                          onPress={() => {
+                            setSelectedFormulaPart(null);
+                            setActiveHighlightRole(null);
+                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                          }}
                         >
-                          <Text style={[styles.quizOptionText, { color: optionText }]}>{opt}</Text>
-                          {icon}
+                          <Ionicons name="close" size={14} color={palette.ink3} />
                         </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-
-                  {/* Explanation Banner */}
-                  {hasAnswered && (
-                    <Animated.View entering={FadeInDown.duration(350)}>
-                      <Card index={1} style={selectedAnswer === question.answer ? styles.feedbackCorrectCard : styles.feedbackWrongCard}>
-                        <Text style={styles.feedbackCardTitle}>
-                          {selectedAnswer === question.answer ? '🎯 Correct!' : '💡 Explanation'}
-                        </Text>
-                        <Text style={styles.feedbackCardBody}>
-                          {question.explanation || 'Perfect syntax analysis.'}
-                        </Text>
-                      </Card>
+                      </View>
+                      <Text style={styles.tooltipBody}>{getFormulaPartExplanation(selectedFormulaPart)}</Text>
                     </Animated.View>
                   )}
 
-                  <View style={{ height: 120 }} />
-                </ScrollView>
-
-                {/* Floating Dock Next Button */}
-                {hasAnswered && (
-                  <View style={styles.dock}>
-                    <LinearGradient
-                      colors={['rgba(244, 241, 235, 0)', 'rgba(244, 241, 235, 0.95)', 'rgba(244, 241, 235, 1)']}
-                      style={styles.dockGradient}
-                    />
-                    <View style={styles.dockButtonWrapper}>
-                      <Button
-                        label={currentQuestionIdx === totalQ - 1 ? 'Show Summary  →' : 'Next Question  →'}
-                        onPress={handleQuizNext}
-                        variant="accent"
-                      />
-                    </View>
-                  </View>
-                )}
+                  <Text style={styles.conceptExplanation}>{lesson.explanation}</Text>
+                </View>
               </View>
-            );
-          })()}
+
+              {/* CARD 2: See It In Action */}
+              <View style={styles.conceptCardContainer}>
+                <View style={[styles.premiumCard, shadow.card]}>
+                  <View style={styles.cardIndicatorRow}>
+                    <Text style={styles.cardIndicatorText}>WORKPLACE CONTEXT</Text>
+                    <Ionicons name="chatbox-ellipses-outline" size={16} color={palette.accent} />
+                  </View>
+
+                  <Text style={styles.conceptTitle}>Real-World Dialogues</Text>
+                  <Text style={styles.conceptRuleSub}>Observe how sentence roles change in practice.</Text>
+
+                  <View style={styles.examplesList}>
+                    {lesson.examples.slice(0, 3).map((ex, idx) => {
+                      const showTrans = exampleTranslationVisible[idx] || false;
+                      return (
+                        <View key={idx} style={styles.exampleItem}>
+                          <View style={styles.exampleHeaderRow}>
+                            <View style={styles.exampleDot} />
+                            <Text style={styles.exampleNumLabel}>EXAMPLE {idx + 1}</Text>
+                          </View>
+
+                          {ex.tokens && ex.tokens.length > 0 ? (
+                            <Text style={styles.exampleText}>
+                              {ex.tokens.map((tok, tokIdx) => {
+                                const color = getRoleColor(tok.role);
+                                const isAccent = color !== palette.ink;
+
+                                // Check if this token matches the active highlighted role from the formula
+                                const isRoleHighlighted = activeHighlightRole && (
+                                  tok.role.toLowerCase().includes(activeHighlightRole) ||
+                                  activeHighlightRole.includes(tok.role.toLowerCase())
+                                );
+
+                                let highlightBg = 'transparent';
+                                if (isRoleHighlighted) {
+                                  const roleLower = tok.role.toLowerCase();
+                                  if (roleLower.includes('subject')) highlightBg = '#EBF4F5'; // Soft blue
+                                  else if (roleLower.includes('verb')) highlightBg = '#FCE7D0'; // Soft amber
+                                  else if (roleLower.includes('object') || roleLower.includes('noun')) highlightBg = '#FDF0D5'; // Soft gold
+                                  else highlightBg = '#EAE8FC'; // Soft purple
+                                }
+
+                                return (
+                                  <Text
+                                    key={tokIdx}
+                                    style={[
+                                      isAccent && { color, fontFamily: font.sansBold },
+                                      isRoleHighlighted && {
+                                        backgroundColor: highlightBg,
+                                        borderRadius: 4,
+                                        paddingHorizontal: 2,
+                                      }
+                                    ]}
+                                  >
+                                    {tok.text}{' '}
+                                  </Text>
+                                );
+                              })}
+                            </Text>
+                          ) : (
+                            <Text style={styles.exampleText}>{ex.sentence}</Text>
+                          )}
+
+                          <TouchableOpacity
+                            style={styles.translationToggle}
+                            onPress={() => {
+                              setExampleTranslationVisible((prev) => ({ ...prev, [idx]: !showTrans }));
+                              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                            }}
+                          >
+                            <Ionicons name="language-outline" size={12} color={palette.accent} />
+                            <Text style={styles.translationToggleText}>
+                              {showTrans ? 'Hide Translation' : 'Show Translation'}
+                            </Text>
+                          </TouchableOpacity>
+
+                          {showTrans && (
+                            <Animated.View entering={FadeInDown} style={styles.translationHintBox}>
+                              <Text style={styles.translationHintText}>{ex.translation_hint}</Text>
+                            </Animated.View>
+                          )}
+
+                          <Text style={styles.exampleNoteText}>
+                            <Text style={{ fontFamily: font.sansBold }}>Usage Tip: </Text>
+                            {ex.note}
+                          </Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+                </View>
+              </View>
+
+              {/* CARD 3: Common Mistakes */}
+              <View style={styles.conceptCardContainer}>
+                <View style={[styles.premiumCard, shadow.card]}>
+                  <View style={styles.cardIndicatorRow}>
+                    <Text style={styles.cardIndicatorText}>COMMON PITFALLS</Text>
+                    <Ionicons name="warning-outline" size={16} color="#C75450" />
+                  </View>
+
+                  <Text style={styles.conceptTitle}>Wrong vs. Right</Text>
+                  <Text style={styles.conceptRuleSub}>Learn to identify and correct standard mistakes.</Text>
+
+                  <View style={styles.mistakesList}>
+                    {lesson.commonMistakes.map((mis, idx) => {
+                      const expanded = mistakeExplanationVisible[idx] || false;
+                      return (
+                        <View key={idx} style={styles.mistakeItem}>
+                          <View style={styles.wrongBox}>
+                            <Text style={styles.mistakeLabelWrong}>❌ INCORRECT</Text>
+                            <Text style={styles.mistakeSentenceWrong}>{mis.wrong}</Text>
+                          </View>
+                          
+                          <View style={styles.rightBox}>
+                            <Text style={styles.mistakeLabelRight}>✅ STANDARD</Text>
+                            <Text style={styles.mistakeSentenceRight}>{mis.right}</Text>
+                          </View>
+
+                          <TouchableOpacity
+                            style={styles.whyButton}
+                            onPress={() => {
+                              setMistakeExplanationVisible((prev) => ({ ...prev, [idx]: !expanded }));
+                              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                            }}
+                          >
+                            <Text style={styles.whyButtonText}>{expanded ? 'Hide Explanation ▲' : 'Why is this wrong? ▼'}</Text>
+                          </TouchableOpacity>
+
+                          {expanded && (
+                            <Animated.View entering={FadeInDown} style={styles.mistakeExplanationBox}>
+                              <Text style={styles.mistakeExplanationText}>{mis.explanation}</Text>
+                            </Animated.View>
+                          )}
+                        </View>
+                      );
+                    })}
+                  </View>
+                </View>
+              </View>
+
+              {/* CARD 4: Pro Tips */}
+              <View style={styles.conceptCardContainer}>
+                <View style={[styles.premiumCard, shadow.card]}>
+                  <View style={styles.cardIndicatorRow}>
+                    <Text style={styles.cardIndicatorText}>EXECUTIVE TIPS</Text>
+                    <Ionicons name="ribbon-outline" size={16} color={palette.accent} />
+                  </View>
+
+                  <Text style={styles.conceptTitle}>Professional Mastery</Text>
+                  <Text style={styles.conceptRuleSub}>Executive speaking tips from world-class communicators.</Text>
+
+                  <ScrollView style={styles.tipsList} showsVerticalScrollIndicator={false}>
+                    {lesson.tipCards?.map((tip, idx) => (
+                      <View key={idx} style={styles.tipCardItem}>
+                        <View style={styles.tipCardHeader}>
+                          <View style={styles.tipIconCircle}>
+                            <Text style={styles.tipEmoji}>{tip.emoji || '💡'}</Text>
+                          </View>
+                          <Text style={styles.tipCardTitle}>{tip.title}</Text>
+                        </View>
+                        <Text style={styles.tipCardBody}>{tip.body}</Text>
+                      </View>
+                    ))}
+                  </ScrollView>
+                </View>
+              </View>
+
+              {/* CARD 5: Visual Blueprint */}
+              <View style={styles.conceptCardContainer}>
+                <View style={[styles.premiumCard, shadow.card]}>
+                  <View style={styles.cardIndicatorRow}>
+                    <Text style={styles.cardIndicatorText}>INTERACTIVE SIMULATOR</Text>
+                    <Ionicons name="game-controller-outline" size={16} color={palette.accent} />
+                  </View>
+
+                  <Text style={styles.conceptTitle}>Visual Grammar Map</Text>
+                  <Text style={styles.conceptRuleSub}>Interact with this physical system to map the rule.</Text>
+
+                  <View style={styles.signatureVisualizationHolder}>
+                    {renderSignatureComponent()}
+                  </View>
+                </View>
+              </View>
+
+            </ScrollView>
+
+            {/* Pagination Controls */}
+            <View style={styles.paginationRow}>
+              <TouchableOpacity
+                style={[styles.arrowNavButton, activeLearnCardIdx === 0 && { opacity: 0.3 }]}
+                disabled={activeLearnCardIdx === 0}
+                onPress={() => jumpToLearnPage(activeLearnCardIdx - 1)}
+              >
+                <Ionicons name="chevron-back" size={20} color={palette.ink} />
+              </TouchableOpacity>
+
+              <View style={styles.pageDotsContainer}>
+                {[0, 1, 2, 3, 4].map((idx) => (
+                  <TouchableOpacity
+                    key={idx}
+                    onPress={() => jumpToLearnPage(idx)}
+                    style={[
+                      styles.pageDot,
+                      activeLearnCardIdx === idx && styles.pageDotActive
+                    ]}
+                  />
+                ))}
+              </View>
+
+              <TouchableOpacity
+                style={[styles.arrowNavButton, activeLearnCardIdx === 4 && { opacity: 0.3 }]}
+                disabled={activeLearnCardIdx === 4}
+                onPress={() => jumpToLearnPage(activeLearnCardIdx + 1)}
+              >
+                <Ionicons name="chevron-forward" size={20} color={palette.ink} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Quick Actions */}
+            <View style={styles.learnQuickActions}>
+              <Button
+                label="Ready to Practice?"
+                onPress={() => handleTabChange('practice')}
+                variant="accent"
+              />
+            </View>
+
+            <View style={{ height: 40 }} />
+          </ScrollView>
         </Animated.View>
       )}
 
-      {/* PHASE 5: Mastery Summary */}
-      {phase === 5 && (
-        <Animated.View
-          key="phase-summary"
-          entering={FadeInRight.duration(400)}
-          exiting={FadeOut.duration(200)}
-          style={styles.flexOne}
-        >
-          <ScrollView
-            contentContainerStyle={styles.scrollContent}
-            showsVerticalScrollIndicator={false}
-          >
-            <View style={styles.summaryCenter}>
-              <View style={styles.successIconOuter}>
-                <Ionicons name="ribbon" size={48} color={palette.gold} />
+      {/* ── Tab 2: PRACTICE (Quiz Session) ───────────────────── */}
+      {activeTab === 'practice' && (
+        <Animated.View entering={FadeIn} style={styles.tabContentContainer}>
+          {!isQuizFinished ? (
+            <ScrollView contentContainerStyle={styles.practiceContent} showsVerticalScrollIndicator={false}>
+              {/* Quiz Header Progress */}
+              <View style={styles.quizProgressHeader}>
+                <Text style={styles.quizProgressText}>
+                  QUESTION {currentQuizIdx + 1} OF {lesson.quiz.length}
+                </Text>
+                
+                <View style={styles.quizProgressBarContainer}>
+                  <View
+                    style={[
+                      styles.quizProgressBarFill,
+                      { width: `${((currentQuizIdx) / lesson.quiz.length) * 100}%` }
+                    ]}
+                  />
+                </View>
+
+                <View style={styles.dotsIndicatorsRow}>
+                  {lesson.quiz.map((_, idx) => (
+                    <View
+                      key={idx}
+                      style={[
+                        styles.quizStatusDot,
+                        idx === currentQuizIdx && styles.quizStatusDotActive,
+                        idx < currentQuizIdx && styles.quizStatusDotCompleted,
+                      ]}
+                    />
+                  ))}
+                </View>
               </View>
 
-              <Text style={styles.summaryTitle}>Topic Completed!</Text>
-              <Text style={styles.summaryTopicName}>{lesson.topic}</Text>
+              {/* Question Card */}
+              {(() => {
+                const question = lesson.quiz[currentQuizIdx];
+                if (!question) return null;
+                const hasAnswered = selectedAnswer !== null;
 
-              {/* Score Display Card */}
-              <Card index={0} style={styles.summaryCard}>
-                <Text style={styles.summaryScoreLabel}>QUIZ SCORE</Text>
-                <Text style={styles.summaryScoreNum}>
-                  {correctCount}/{lesson.quiz.length}
-                </Text>
-                <Text style={styles.summaryPerformance}>
-                  {correctCount === lesson.quiz.length
-                    ? 'Perfect!'
-                    : correctCount >= 4
-                      ? 'Excellent!'
-                      : correctCount >= 3
-                        ? 'Good job!'
-                        : 'Keep practicing!'}
-                </Text>
-              </Card>
+                return (
+                  <View style={styles.questionBlock}>
+                    <View style={[styles.questionCard, shadow.card]}>
+                      <Text style={styles.questionCardTitle}>{question.q}</Text>
+                    </View>
 
-              {/* XP Award Banner */}
-              <View style={styles.xpAwardBanner}>
-                <Ionicons name="sparkles" size={18} color={palette.amber} />
-                <Text style={styles.xpAwardText}>+{xpAwarded} XP Awarded</Text>
+                    {/* Options List */}
+                    <View style={styles.optionsListContainer}>
+                      {question.options.map((opt, idx) => {
+                        const isSelected = selectedAnswer === idx;
+                        const isCorrect = idx === question.answer;
+
+                        let cardStyle: any = styles.optionBtn;
+                        let textStyle: any = styles.optionBtnText;
+                        let rightIcon = null;
+
+                        if (hasAnswered) {
+                          if (isCorrect) {
+                            cardStyle = styles.optionCorrectBtn;
+                            textStyle = styles.optionCorrectBtnText;
+                            rightIcon = <Ionicons name="checkmark-circle" size={18} color="#FFFFFF" />;
+                          } else if (isSelected) {
+                            cardStyle = styles.optionWrongBtn;
+                            textStyle = styles.optionWrongBtnText;
+                            rightIcon = <Ionicons name="close-circle" size={18} color="#FFFFFF" />;
+                          } else {
+                            cardStyle = styles.optionMutedBtn;
+                          }
+                        }
+
+                        return (
+                          <TouchableOpacity
+                            key={idx}
+                            disabled={hasAnswered}
+                            style={cardStyle}
+                            onPress={() => handleSelectQuizAnswer(idx)}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={textStyle}>{opt}</Text>
+                            {rightIcon}
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+
+                    {/* Ask Maya Tutor Trigger */}
+                    {hasAnswered && selectedAnswer !== question.answer && (
+                      <TouchableOpacity
+                        style={[styles.mayaAssistantTrigger, shadow.card]}
+                        onPress={() => setMayaModalVisible(true)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.mayaAssistantIcon}>🤖</Text>
+                        <View style={styles.mayaAssistantTextCol}>
+                          <Text style={styles.mayaAssistantTitle}>Ask Maya Tutor</Text>
+                          <Text style={styles.mayaAssistantSub}>Learn why this selection isn't standard.</Text>
+                        </View>
+                        <Ionicons name="chevron-forward" size={16} color={palette.accent} />
+                      </TouchableOpacity>
+                    )}
+
+                    {/* Inline Explanation Feedback */}
+                    {hasAnswered && (
+                      <Animated.View entering={FadeInDown} style={styles.quizExplanationInline}>
+                        <View style={styles.explanationInlineTitleRow}>
+                          <Ionicons name="information-circle-outline" size={14} color={palette.accent} />
+                          <Text style={styles.explanationInlineTitle}>EXPLANATION</Text>
+                        </View>
+                        <Text style={styles.explanationInlineBody}>{question.explanation || 'Excellent work matching structural rules.'}</Text>
+                      </Animated.View>
+                    )}
+
+                    {/* Next Button */}
+                    {hasAnswered && (
+                      <View style={styles.bottomNextContainer}>
+                        <Button
+                          label={currentQuizIdx === lesson.quiz.length - 1 ? 'Analyze Final Score' : 'Next Question'}
+                          onPress={handleQuizNext}
+                          variant="accent"
+                        />
+                      </View>
+                    )}
+
+                    {/* Ask Maya Tutor Overlay Modal */}
+                    <AskMayaModal
+                      visible={mayaModalVisible}
+                      onClose={() => setMayaModalVisible(false)}
+                      userAnswer={question.options[selectedAnswer ?? 0]}
+                      correctAnswer={question.options[question.answer]}
+                      concept={lesson.topic}
+                    />
+                  </View>
+                );
+              })()}
+            </ScrollView>
+          ) : (
+            // Results screen
+            <Animated.View entering={FadeIn} style={styles.resultsWrapper}>
+              <View style={[styles.resultsCard, shadow.card]}>
+                <View style={styles.awardCircleBig}>
+                  <Ionicons name="sparkles-outline" size={48} color={palette.gold} />
+                </View>
+
+                <Text style={styles.resultsCongratulations}>Practice Complete!</Text>
+                <Text style={styles.resultsTopicTitle}>{lesson.topic}</Text>
+
+                <View style={styles.resultsGrid}>
+                  <View style={styles.resultsGridItem}>
+                    <Text style={styles.resultsNum}>+{xpAwarded}</Text>
+                    <Text style={styles.resultsLabel}>XP AWARDED</Text>
+                  </View>
+
+                  <View style={styles.resultsGridDivider} />
+
+                  <View style={styles.resultsGridItem}>
+                    <Text style={styles.resultsNum}>{masteryScore}%</Text>
+                    <Text style={styles.resultsLabel}>MASTERY LEVEL</Text>
+                  </View>
+                </View>
+
+                <View style={styles.resultsActionsContainer}>
+                  <Button
+                    label="Go to Challenge Mode"
+                    onPress={() => handleTabChange('challenge')}
+                    variant="accent"
+                    style={styles.resultsBtn}
+                  />
+
+                  <Button
+                    label="Back to Grammar Hub"
+                    onPress={() => navigation.navigate('Grammar')}
+                    variant="ghost"
+                    style={styles.resultsBtn}
+                  />
+
+                  <TouchableOpacity style={styles.retryPracticeBtn} onPress={handleResetQuiz}>
+                    <Ionicons name="refresh" size={14} color={palette.ink2} />
+                    <Text style={styles.retryPracticeText}>Retry Practice Quiz</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </Animated.View>
+          )}
+        </Animated.View>
+      )}
+
+      {/* ── Tab 3: QUICK REF (Cheat Sheet Lookup) ────────────── */}
+      {activeTab === 'quick_ref' && (
+        <Animated.View entering={FadeIn} style={styles.tabContentContainer}>
+          <ScrollView contentContainerStyle={styles.quickRefContent} showsVerticalScrollIndicator={false}>
+            <View style={[styles.premiumCard, shadow.card]}>
+              <View style={styles.cardIndicatorRow}>
+                <Text style={styles.cardIndicatorText}>QUICK REFERENCE SHEETS</Text>
+                <Ionicons name="clipboard-outline" size={16} color={palette.accent} />
               </View>
 
-              {/* Action Buttons Stack */}
-              <View style={styles.summaryButtons}>
-                {nextTopic ? (
-                  <Button label="Next Topic  →" onPress={handleNextTopic} variant="accent" style={styles.summaryBtn} />
-                ) : null}
+              <Text style={styles.conceptTitle}>{lesson.topic}</Text>
+              <Text style={styles.quickRefSectionLabel}>THE FORMULA</Text>
+              
+              <View style={[styles.formulaBox, { backgroundColor: palette.paper, marginBottom: space.sm }]}>
+                {renderFormulaLayout()}
+              </View>
 
-                <Button label="Review This Topic" onPress={handleReviewTopic} variant="ghost" style={styles.summaryBtn} />
+              <TouchableOpacity
+                style={[styles.formulaCopyButton, { alignSelf: 'flex-end', marginBottom: space.md }]}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                  showToast('📋', 'Formula copied to clipboard!');
+                }}
+              >
+                <Ionicons name="copy-outline" size={12} color={palette.accent} />
+                <Text style={styles.formulaCopyText}>Copy Raw Formula</Text>
+              </TouchableOpacity>
 
-                <TouchableOpacity onPress={handleBackToHub} style={styles.backToHubLink}>
-                  <Text style={styles.backToHubText}>Back to Grammar Hub</Text>
-                </TouchableOpacity>
+              <Text style={styles.quickRefSectionLabel}>CORE USAGE RULE</Text>
+              <Text style={styles.quickRefBodyText}>{lesson.rule}</Text>
+              <Text style={styles.quickRefExplanation}>{lesson.explanation}</Text>
+
+              <View style={styles.blueprintDivider} />
+
+              <Text style={styles.quickRefSectionLabel}>KEY EXAMPLES</Text>
+              <View style={styles.quickRefExamplesList}>
+                {lesson.examples.map((ex, idx) => (
+                  <View key={idx} style={styles.quickRefExampleRow}>
+                    <Text style={styles.quickRefExampleDot}>•</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.quickRefExampleSentence}>{ex.sentence}</Text>
+                      <Text style={styles.quickRefExampleTranslation}>{ex.translation_hint}</Text>
+                    </View>
+                  </View>
+                ))}
               </View>
             </View>
-
-            <View style={{ height: 60 }} />
           </ScrollView>
+        </Animated.View>
+      )}
+
+      {/* ── Tab 4: CHALLENGE (Rapid Fire Timed Mode) ─────────── */}
+      {activeTab === 'challenge' && (
+        <Animated.View entering={FadeIn} style={styles.tabContentContainer}>
+          {/* Pre-Game Idle / Rules */}
+          {challengeState === 'idle' && (
+            <View style={styles.challengeScaffold}>
+              <View style={[styles.premiumCard, shadow.card, styles.challengeCenterCard]}>
+                <View style={styles.awardCircleBig}>
+                  <Ionicons name="flash-outline" size={40} color={palette.amber} />
+                </View>
+                
+                <Text style={styles.challengeMainTitle}>60-Second Challenge</Text>
+                <Text style={styles.challengeSubtitle}>Rapid-Fire Structural Test</Text>
+
+                <View style={styles.challengeRulesContainer}>
+                  <View style={styles.ruleBullet}>
+                    <Ionicons name="time-outline" size={16} color={palette.accent} />
+                    <Text style={styles.challengeRuleText}>You have 60 seconds to answer as many questions as possible.</Text>
+                  </View>
+
+                  <View style={styles.ruleBullet}>
+                    <Ionicons name="trending-up-outline" size={16} color={palette.accent} />
+                    <Text style={styles.challengeRuleText}>Consecutive correct answers trigger a streak multiplier.</Text>
+                  </View>
+
+                  <View style={styles.ruleBullet}>
+                    <Ionicons name="infinite-outline" size={16} color={palette.accent} />
+                    <Text style={styles.challengeRuleText}>The questions will loop if you master them before the timer is up.</Text>
+                  </View>
+                </View>
+
+                <Button label="🚀 Start Challenge" onPress={handleStartChallenge} variant="accent" style={{ width: '100%', marginTop: space.lg }} />
+              </View>
+            </View>
+          )}
+
+          {/* Countdown State */}
+          {challengeState === 'countdown' && (
+            <View style={styles.challengeScaffold}>
+              <Animated.View entering={FadeIn} exiting={FadeOut} style={styles.countdownBox}>
+                <Text style={styles.countdownTitle}>GET READY</Text>
+                <Text style={styles.countdownNumber}>{challengeCountdown}</Text>
+              </Animated.View>
+            </View>
+          )}
+
+          {/* Gameplay State */}
+          {challengeState === 'playing' && (
+            <ScrollView contentContainerStyle={styles.playingScaffold} showsVerticalScrollIndicator={false}>
+              {/* Gameplay Header stats */}
+              <View style={styles.gameplayHeader}>
+                <View style={styles.timerPill}>
+                  <Ionicons
+                    name="time"
+                    size={16}
+                    color={challengeTimer <= 15 ? '#C75450' : palette.accent}
+                  />
+                  <Text style={[styles.timerPillText, challengeTimer <= 15 && { color: '#C75450' }]}>
+                    {challengeTimer}s
+                  </Text>
+                </View>
+
+                <View style={styles.streakPill}>
+                  <Ionicons name="flame" size={16} color={palette.amber} />
+                  <Text style={styles.streakPillText}>
+                    Streak: {challengeStreak}
+                  </Text>
+                </View>
+
+                <View style={styles.scorePill}>
+                  <Text style={styles.scorePillText}>
+                    Score: {challengeScore}
+                  </Text>
+                </View>
+              </View>
+
+              {/* Question Screen */}
+              {(() => {
+                const question = lesson.quiz[challengeQuestionIdx];
+                if (!question) return null;
+                const hasAnswered = challengeSelectedAnswer !== null;
+
+                return (
+                  <View style={styles.questionBlock}>
+                    <View style={[styles.questionCard, shadow.card]}>
+                      <Text style={styles.questionCardTitle}>{question.q}</Text>
+                    </View>
+
+                    {/* Options List */}
+                    <View style={styles.optionsListContainer}>
+                      {question.options.map((opt, idx) => {
+                        const isSelected = challengeSelectedAnswer === idx;
+                        const isCorrect = idx === question.answer;
+
+                        let cardStyle: any = styles.optionBtn;
+                        let textStyle: any = styles.optionBtnText;
+                        let rightIcon = null;
+
+                        if (hasAnswered) {
+                          if (isCorrect) {
+                            cardStyle = styles.optionCorrectBtn;
+                            textStyle = styles.optionCorrectBtnText;
+                            rightIcon = <Ionicons name="checkmark-circle" size={18} color="#FFFFFF" />;
+                          } else if (isSelected) {
+                            cardStyle = styles.optionWrongBtn;
+                            textStyle = styles.optionWrongBtnText;
+                            rightIcon = <Ionicons name="close-circle" size={18} color="#FFFFFF" />;
+                          } else {
+                            cardStyle = styles.optionMutedBtn;
+                          }
+                        }
+
+                        return (
+                          <TouchableOpacity
+                            key={idx}
+                            disabled={hasAnswered}
+                            style={cardStyle}
+                            onPress={() => handleSelectChallengeAnswer(idx)}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={textStyle}>{opt}</Text>
+                            {rightIcon}
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </View>
+                );
+              })()}
+            </ScrollView>
+          )}
+
+          {/* Game Over Screen */}
+          {challengeState === 'gameover' && (
+            <View style={styles.challengeScaffold}>
+              <View style={[styles.premiumCard, shadow.card, styles.challengeCenterCard]}>
+                <View style={styles.awardCircleBig}>
+                  <Ionicons name="trophy-outline" size={44} color={palette.gold} />
+                </View>
+
+                <Text style={styles.challengeGameOverTitle}>Time's Up!</Text>
+                <Text style={styles.challengeSubtitle}>Challenge Finished</Text>
+
+                <View style={styles.resultsGrid}>
+                  <View style={styles.resultsGridItem}>
+                    <Text style={styles.resultsNum}>{challengeScore}</Text>
+                    <Text style={styles.resultsLabel}>FINAL SCORE</Text>
+                  </View>
+
+                  <View style={styles.resultsGridDivider} />
+
+                  <View style={styles.resultsGridItem}>
+                    <Text style={styles.resultsNum}>{challengeBestStreak}</Text>
+                    <Text style={styles.resultsLabel}>BEST STREAK</Text>
+                  </View>
+                </View>
+
+                <View style={styles.resultsActionsContainer}>
+                  <Button label="🚀 Start Again" onPress={handleStartChallenge} variant="accent" style={styles.resultsBtn} />
+                  <Button
+                    label="Back to Grammar Hub"
+                    onPress={() => navigation.navigate('Grammar')}
+                    variant="ghost"
+                    style={styles.resultsBtn}
+                  />
+                </View>
+              </View>
+            </View>
+          )}
         </Animated.View>
       )}
     </View>
@@ -680,12 +1284,10 @@ export default function GrammarScreen() {
 }
 
 const styles = StyleSheet.create({
+  /* Scaffold */
   screen: {
     flex: 1,
     backgroundColor: palette.paper,
-  },
-  flexOne: {
-    flex: 1,
   },
   loadingScreen: {
     flex: 1,
@@ -704,516 +1306,906 @@ const styles = StyleSheet.create({
     marginTop: space.lg,
     textAlign: 'center',
   },
-  scrollContent: {
+
+  /* Tabs Bar */
+  tabsContainer: {
+    backgroundColor: palette.paper,
+    borderBottomWidth: 1,
+    borderBottomColor: palette.line,
+    paddingVertical: space.sm,
+  },
+  tabsScroll: {
     paddingHorizontal: space.xl,
-    paddingTop: space.sm,
-    gap: space.lg,
+    gap: space.sm,
+  },
+  tabButton: {
+    paddingHorizontal: space.lg,
+    paddingVertical: 8,
+    borderRadius: radius.pill,
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: palette.line,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  tabActiveButton: {
+    backgroundColor: palette.accent,
+    borderColor: palette.accent,
+  },
+  tabLockedButton: {
+    backgroundColor: 'transparent',
+    borderColor: palette.line2,
+    opacity: 0.6,
+  },
+  tabButtonText: {
+    fontFamily: font.sansSemi,
+    fontSize: 12,
+    color: palette.ink2,
+  },
+  tabActiveButtonText: {
+    color: '#FFFFFF',
   },
 
-  /* titles & headers */
-  titleContainer: {
-    marginTop: space.xs,
-    gap: space.xs,
+  /* Tab View Layouts */
+  tabContentContainer: {
+    flex: 1,
+  },
+
+  /* LEARN TAB STYLES */
+  learnScrollContainer: {
+    paddingTop: space.md,
+    alignItems: 'center',
+  },
+  horizontalScrollContent: {
+    paddingHorizontal: 0,
+    gap: 0,
+  },
+  conceptCardContainer: {
+    width: SCREEN_W,
+    paddingHorizontal: space.xl,
+    justifyContent: 'flex-start',
+  },
+  premiumCard: {
+    backgroundColor: palette.card,
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    borderColor: palette.line,
+    padding: space.xl,
+    minHeight: 460,
+  },
+  cardIndicatorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: space.md,
+  },
+  cardIndicatorText: {
+    fontFamily: font.sansBold,
+    fontSize: 9,
+    color: palette.ink3,
+    letterSpacing: 1.2,
   },
   conceptTitle: {
-    fontFamily: font.serifMed,
-    fontSize: 28,
+    fontFamily: font.serifBold,
+    fontSize: 22,
     color: palette.ink,
-    lineHeight: 34,
+    lineHeight: 28,
+    marginBottom: space.xs,
   },
-  badge: {
-    alignSelf: 'flex-start',
-    paddingVertical: 3,
-    paddingHorizontal: 10,
-    borderRadius: radius.sm,
-  },
-  badgeText: {
-    fontFamily: font.sansBold,
-    fontSize: 10,
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-  },
-
-  /* formula card */
-  formulaCard: {
-    backgroundColor: palette.accentSoft,
-    borderColor: 'rgba(55, 86, 61, 0.15)',
-    borderWidth: 1,
-    padding: space.lg,
-  },
-  formulaLabel: {
-    fontFamily: font.sansSemi,
-    fontSize: 10,
-    color: palette.accentInk,
-    letterSpacing: 1,
-    marginBottom: 6,
-  },
-  formulaText: {
-    fontFamily: Platform.OS === 'ios' ? 'Courier New' : 'monospace',
-    fontSize: 15,
-    fontWeight: 'bold',
-    color: palette.ink,
-  },
-
-  /* timeline */
-  timelineContainer: {
-    backgroundColor: palette.card,
-    borderRadius: radius.md,
-    padding: space.lg,
-    borderWidth: 1,
-    borderColor: palette.line2,
-  },
-  timelineTitle: {
-    fontFamily: font.sansSemi,
-    fontSize: 11,
-    color: palette.ink3,
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
+  conceptRule: {
+    fontFamily: font.sansMed,
+    fontSize: 14,
+    color: palette.accent,
+    lineHeight: 20,
     marginBottom: space.lg,
   },
-  timelineTrack: {
-    height: 4,
+  conceptRuleSub: {
+    fontFamily: font.sansReg,
+    fontSize: 13,
+    color: palette.ink2,
+    lineHeight: 18,
+    marginBottom: space.lg,
+  },
+  blueprintDivider: {
+    height: 1,
     backgroundColor: palette.line,
-    borderRadius: radius.pill,
-    position: 'relative',
-    marginBottom: space.md,
-    justifyContent: 'center',
+    marginVertical: space.lg,
   },
-  timelineFill: {
-    position: 'absolute',
-    left: 0,
-    top: 0,
-    bottom: 0,
-    borderRadius: radius.pill,
+  sectionLabel: {
+    fontFamily: font.sansBold,
+    fontSize: 9,
+    color: palette.ink3,
+    letterSpacing: 1,
+    marginBottom: space.sm,
   },
-  timelineDot: {
-    position: 'absolute',
-    right: -7,
-    top: -5,
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: palette.amber,
+  formulaBox: {
+    backgroundColor: palette.paper,
+    borderWidth: 1,
+    borderColor: palette.line,
+    borderRadius: radius.md,
+    padding: space.md,
+    marginBottom: space.lg,
+  },
+  formulaLinesContainer: {
+    gap: space.md,
+  },
+  formulaLine: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+    borderWidth: 1,
+    borderColor: palette.line2,
+    borderRadius: radius.md,
+    padding: space.md,
+    backgroundColor: palette.paper,
   },
-  timelineDotInner: {
+  formulaLabelBadge: {
+    backgroundColor: palette.accent,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 8,
+    marginRight: 4,
+  },
+  formulaLabelText: {
+    fontFamily: font.sansBold,
+    fontSize: 8,
+    color: '#FFFFFF',
+    letterSpacing: 0.5,
+  },
+  formulaElementsWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 6,
+    flex: 1,
+  },
+  formulaCapsule: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    borderWidth: 1.5,
+    borderColor: 'transparent',
+  },
+  formulaCapsuleText: {
+    fontFamily: font.sansBold,
+    fontSize: 11,
+  },
+  formulaOperatorText: {
+    fontFamily: font.sansBold,
+    fontSize: 13,
+    color: palette.ink3,
+    marginHorizontal: 1,
+  },
+  tooltipCard: {
+    backgroundColor: '#FFFDF9',
+    borderWidth: 1,
+    borderColor: '#F2D7B4',
+    borderRadius: radius.md,
+    padding: space.md,
+    marginTop: -space.sm,
+    marginBottom: space.lg,
+  },
+  tooltipHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  tooltipTitle: {
+    fontFamily: font.sansBold,
+    fontSize: 10,
+    color: palette.amber,
+    flex: 1,
+    letterSpacing: 0.5,
+  },
+  closeTooltipBtn: {
+    padding: 2,
+  },
+  tooltipBody: {
+    fontFamily: font.sansReg,
+    fontSize: 12,
+    color: palette.ink2,
+    lineHeight: 17,
+  },
+  conceptExplanation: {
+    fontFamily: font.sansReg,
+    fontSize: 13,
+    color: palette.ink2,
+    lineHeight: 20,
+  },
+
+  /* Workplace Context / Dialogue examples */
+  examplesList: {
+    gap: space.lg,
+  },
+  exampleItem: {
+    backgroundColor: palette.paper,
+    borderWidth: 1,
+    borderColor: palette.line,
+    borderRadius: radius.md,
+    padding: space.md,
+  },
+  exampleHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+  },
+  exampleDot: {
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: palette.accent,
   },
-  timelineLabels: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+  exampleNumLabel: {
+    fontFamily: font.sansBold,
+    fontSize: 8,
+    color: palette.accent,
+    letterSpacing: 0.8,
   },
-  timelineLabel: {
+  exampleText: {
     fontFamily: font.sansReg,
-    fontSize: 11,
-    color: palette.ink3,
+    fontSize: 14,
+    color: palette.ink,
+    lineHeight: 20,
+    marginBottom: 8,
   },
-  timelineMarker: {
+  translationToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: 6,
+  },
+  translationToggleText: {
     fontFamily: font.sansSemi,
     fontSize: 11,
     color: palette.accent,
   },
-
-  /* explanation sections */
-  explanationSection: {
-    gap: space.md,
-  },
-  ruleLargeText: {
-    fontFamily: font.serifMed,
-    fontSize: 18,
-    color: palette.ink,
-    lineHeight: 25,
-  },
-  explanationText: {
-    fontFamily: font.sansReg,
-    fontSize: 14,
-    color: palette.ink2,
-    lineHeight: 22,
-  },
-
-  /* tips slider */
-  tipsSection: {
-    marginTop: space.sm,
-    gap: space.md,
-  },
-  sectionTitle: {
-    fontFamily: font.serifMed,
-    fontSize: 18,
-    color: palette.ink,
-  },
-  tipsScroll: {
-    gap: space.md,
-    paddingVertical: space.xs,
-  },
-  tipCard: {
-    width: SCREEN_W - space.xl * 2 - space.md,
+  translationHintBox: {
     backgroundColor: palette.card,
-    borderRadius: radius.md,
-    padding: space.xl,
+    borderRadius: radius.sm,
+    padding: space.sm,
     borderWidth: 1,
     borderColor: palette.line2,
+    marginBottom: 8,
+  },
+  translationHintText: {
+    fontFamily: font.sansReg,
+    fontSize: 12,
+    color: palette.ink2,
+    fontStyle: 'italic',
+  },
+  exampleNoteText: {
+    fontFamily: font.sansReg,
+    fontSize: 11,
+    color: palette.ink3,
+    lineHeight: 15,
+  },
+
+  /* Mistakes styling */
+  mistakesList: {
+    gap: space.lg,
+  },
+  mistakeItem: {
     gap: space.sm,
   },
+  wrongBox: {
+    backgroundColor: '#FDF2F2',
+    borderWidth: 1,
+    borderColor: '#FBD5D5',
+    borderRadius: radius.md,
+    padding: space.md,
+  },
+  mistakeLabelWrong: {
+    fontFamily: font.sansBold,
+    fontSize: 8,
+    color: '#C75450',
+    letterSpacing: 0.8,
+    marginBottom: 4,
+  },
+  mistakeSentenceWrong: {
+    fontFamily: font.sansReg,
+    fontSize: 13,
+    color: '#9C2A26',
+    textDecorationLine: 'line-through',
+  },
+  rightBox: {
+    backgroundColor: '#F3FAF7',
+    borderWidth: 1,
+    borderColor: '#DEF7EC',
+    borderRadius: radius.md,
+    padding: space.md,
+  },
+  mistakeLabelRight: {
+    fontFamily: font.sansBold,
+    fontSize: 8,
+    color: palette.accent,
+    letterSpacing: 0.8,
+    marginBottom: 4,
+  },
+  mistakeSentenceRight: {
+    fontFamily: font.sansBold,
+    fontSize: 13,
+    color: palette.accentInk,
+  },
+  whyButton: {
+    alignSelf: 'flex-start',
+    paddingVertical: 4,
+  },
+  whyButtonText: {
+    fontFamily: font.sansSemi,
+    fontSize: 11,
+    color: palette.accent,
+  },
+  mistakeExplanationBox: {
+    backgroundColor: palette.paper,
+    borderRadius: radius.md,
+    padding: space.md,
+    borderWidth: 1,
+    borderColor: palette.line,
+  },
+  mistakeExplanationText: {
+    fontFamily: font.sansReg,
+    fontSize: 12,
+    color: palette.ink2,
+    lineHeight: 18,
+  },
+
+  /* Tips List styling */
+  tipsList: {
+    maxHeight: 380,
+  },
+  tipCardItem: {
+    backgroundColor: palette.paper,
+    borderWidth: 1,
+    borderColor: palette.line,
+    borderRadius: radius.md,
+    padding: space.lg,
+    marginBottom: space.md,
+  },
+  tipCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    marginBottom: 6,
+  },
+  tipIconCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: palette.card,
+    borderWidth: 1,
+    borderColor: palette.line,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   tipEmoji: {
-    fontSize: 24,
+    fontSize: 16,
   },
   tipCardTitle: {
-    fontFamily: font.serifMed,
-    fontSize: 16,
+    fontFamily: font.sansBold,
+    fontSize: 14,
     color: palette.ink,
   },
   tipCardBody: {
     fontFamily: font.sansReg,
-    fontSize: 13,
+    fontSize: 12,
     color: palette.ink2,
     lineHeight: 18,
   },
 
-  /* floating button docks */
-  dock: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: 100,
-    justifyContent: 'flex-end',
-  },
-  dockGradient: {
-    ...StyleSheet.absoluteFill,
-  },
-  dockButtonWrapper: {
-    paddingHorizontal: space.xl,
-    paddingBottom: 22,
+  /* Signature Visualization inside Learn cards */
+  signatureVisualizationHolder: {
+    marginTop: space.sm,
+    justifyContent: 'center',
   },
 
-  /* phase descriptions */
-  phaseHeader: {
-    marginVertical: space.sm,
-    gap: 2,
+  /* Pagination styles */
+  paginationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: space.xl,
+    marginVertical: space.lg,
   },
-  phaseKicker: {
-    fontFamily: font.sansBold,
-    fontSize: 10,
-    color: palette.ink3,
-    letterSpacing: 1.2,
-  },
-  phaseTitle: {
-    fontFamily: font.serifMed,
-    fontSize: 26,
-    color: palette.ink,
-  },
-  phaseSubtitle: {
-    fontFamily: font.sansReg,
-    fontSize: 13,
-    color: palette.ink2,
-  },
-
-  /* interactive examples */
-  exampleCard: {
+  arrowNavButton: {
+    padding: 8,
+    borderRadius: radius.pill,
     backgroundColor: palette.card,
-    borderRadius: radius.xl,
-    padding: space.xl,
-    gap: space.md,
     borderWidth: 1,
     borderColor: palette.line,
   },
-  exampleSentence: {
-    fontFamily: font.serifMed,
-    fontSize: 18,
-    color: palette.ink,
-    lineHeight: 24,
-  },
-  tokensRow: {
+  pageDotsContainer: {
     flexDirection: 'row',
-    gap: space.sm,
-    flexWrap: 'wrap',
-    marginVertical: 4,
-  },
-  tokenPill: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: radius.md,
     alignItems: 'center',
-    gap: 2,
+    gap: 8,
   },
-  tokenLabelText: {
-    fontFamily: font.sansSemi,
-    fontSize: 14,
-  },
-  tokenRoleText: {
-    fontFamily: font.sansReg,
-    fontSize: 9,
-    color: palette.ink3,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  translationText: {
-    fontFamily: font.sansReg,
-    fontStyle: 'italic',
-    fontSize: 13,
-    color: palette.ink2,
-    marginTop: 2,
-  },
-  exampleDivider: {
-    height: 1,
+  pageDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
     backgroundColor: palette.line,
   },
-  exampleNote: {
-    fontFamily: font.sansReg,
-    fontSize: 12.5,
-    color: palette.ink2,
-    lineHeight: 18,
+  pageDotActive: {
+    backgroundColor: palette.accent,
+    width: 20,
+  },
+  learnQuickActions: {
+    paddingHorizontal: space.xl,
+    width: '100%',
+    marginTop: space.md,
   },
 
-  /* mistakes */
-  mistakeCard: {
-    backgroundColor: palette.card,
-    borderRadius: radius.xl,
-    padding: space.xl,
-    borderWidth: 1,
-    borderColor: palette.line,
-    gap: space.lg,
+  /* PRACTICE TAB STYLES */
+  practiceContent: {
+    paddingHorizontal: space.xl,
+    paddingTop: space.lg,
+    paddingBottom: 100,
   },
-  mistakeRowWrong: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    backgroundColor: '#FEF2F2',
-    padding: space.md,
-    borderRadius: radius.md,
-    borderColor: 'rgba(239, 68, 68, 0.12)',
-    borderWidth: 1,
-  },
-  mistakeRowRight: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    backgroundColor: palette.accentSoft,
-    padding: space.md,
-    borderRadius: radius.md,
-    borderColor: 'rgba(55, 86, 61, 0.12)',
-    borderWidth: 1,
-  },
-  mistakeIcon: {
-    marginTop: 2,
-    marginRight: space.sm,
-  },
-  mistakeSentenceCol: {
-    flex: 1,
-    gap: 3,
-  },
-  mistakeSentenceWrong: {
-    fontFamily: font.sansReg,
-    textDecorationLine: 'line-through',
-    fontSize: 14.5,
-    color: '#991B1B',
-  },
-  mistakeSentenceRight: {
-    fontFamily: font.sansSemi,
-    fontSize: 14.5,
-    color: palette.accentInk,
-  },
-  mistakeLabelWrong: {
-    fontFamily: font.sansBold,
-    fontSize: 8.5,
-    color: '#EF4444',
-    letterSpacing: 0.6,
-  },
-  mistakeLabelRight: {
-    fontFamily: font.sansBold,
-    fontSize: 8.5,
-    color: palette.accent,
-    letterSpacing: 0.6,
-  },
-  mistakeExplanationContainer: {
-    borderTopWidth: 1,
-    borderTopColor: palette.line2,
-    paddingTop: space.md,
-  },
-  mistakeExplanation: {
-    fontFamily: font.sansReg,
-    fontSize: 13,
-    color: palette.ink2,
-    lineHeight: 19,
-  },
-
-  /* quiz style */
-  quizHeader: {
-    gap: space.xs,
-    marginTop: space.sm,
+  quizProgressHeader: {
+    marginBottom: space.lg,
   },
   quizProgressText: {
-    fontFamily: font.sansSemi,
-    fontSize: 11,
-    color: palette.ink3,
-    letterSpacing: 0.5,
+    fontFamily: font.sansBold,
+    fontSize: 10,
+    color: palette.accent,
+    letterSpacing: 1.5,
+    marginBottom: space.sm,
   },
-  quizProgressBarTrack: {
-    height: 4,
+  quizProgressBarContainer: {
+    height: 6,
+    borderRadius: 3,
     backgroundColor: palette.line,
-    borderRadius: radius.pill,
     overflow: 'hidden',
+    marginBottom: space.md,
   },
   quizProgressBarFill: {
     height: '100%',
     backgroundColor: palette.accent,
-    borderRadius: radius.pill,
+    borderRadius: 3,
   },
-  quizCard: {
-    paddingVertical: space.xxl,
-    justifyContent: 'center',
-    alignItems: 'center',
+  dotsIndicatorsRow: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  quizStatusDot: {
+    flex: 1,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: palette.line2,
+  },
+  quizStatusDotActive: {
+    backgroundColor: palette.gold,
+  },
+  quizStatusDotCompleted: {
+    backgroundColor: palette.accent,
+  },
+  questionBlock: {
+    gap: space.lg,
+  },
+  questionCard: {
     backgroundColor: palette.card,
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    borderColor: palette.line,
+    padding: space.xl,
   },
-  quizQuestionText: {
+  questionCardTitle: {
     fontFamily: font.serifMed,
-    fontSize: 20,
+    fontSize: 18,
     color: palette.ink,
-    textAlign: 'center',
-    lineHeight: 28,
+    lineHeight: 26,
   },
-  quizOptionsCol: {
+  optionsListContainer: {
     gap: space.md,
   },
-  quizOptionBtn: {
+  optionBtn: {
+    backgroundColor: palette.card,
+    borderWidth: 1,
+    borderColor: palette.line,
+    borderRadius: radius.lg,
+    padding: space.lg,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    borderWidth: 1,
-    borderRadius: radius.md,
-    paddingVertical: 14,
-    paddingHorizontal: space.lg,
   },
-  quizOptionText: {
+  optionBtnText: {
     fontFamily: font.sansMed,
-    fontSize: 15,
-    flex: 1,
-  },
-  emptyQuiz: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: space.xxl,
-    gap: space.lg,
-  },
-  emptyQuizText: {
-    fontFamily: font.serifReg,
-    fontSize: 16,
-    color: palette.ink2,
-    textAlign: 'center',
-  },
-
-  /* quiz feedback card */
-  feedbackCorrectCard: {
-    backgroundColor: palette.accentSoft,
-    borderColor: 'rgba(55, 86, 61, 0.15)',
-    borderWidth: 1,
-    gap: space.xs,
-  },
-  feedbackWrongCard: {
-    backgroundColor: palette.amberSoft,
-    borderColor: 'rgba(178, 107, 34, 0.15)',
-    borderWidth: 1,
-    gap: space.xs,
-  },
-  feedbackCardTitle: {
-    fontFamily: font.sansSemi,
-    fontSize: 13,
+    fontSize: 14,
     color: palette.ink,
   },
-  feedbackCardBody: {
-    fontFamily: font.sansReg,
-    fontSize: 13,
-    color: palette.ink2,
-    lineHeight: 18,
+  optionCorrectBtn: {
+    backgroundColor: palette.accent,
+    borderColor: palette.accent,
+    borderRadius: radius.lg,
+    padding: space.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  optionCorrectBtnText: {
+    fontFamily: font.sansBold,
+    fontSize: 14,
+    color: '#FFFFFF',
+  },
+  optionWrongBtn: {
+    backgroundColor: '#C75450',
+    borderColor: '#C75450',
+    borderRadius: radius.lg,
+    padding: space.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  optionWrongBtnText: {
+    fontFamily: font.sansBold,
+    fontSize: 14,
+    color: '#FFFFFF',
+  },
+  optionMutedBtn: {
+    backgroundColor: palette.card,
+    borderWidth: 1,
+    borderColor: palette.line2,
+    borderRadius: radius.lg,
+    padding: space.lg,
+    opacity: 0.4,
   },
 
-  /* summary screen styling */
-  summaryCenter: {
+  /* Ask Maya Trigger in Quiz */
+  mayaAssistantTrigger: {
+    backgroundColor: palette.card,
+    borderWidth: 1,
+    borderColor: palette.line,
+    borderRadius: radius.xl,
+    padding: space.md,
+    flexDirection: 'row',
     alignItems: 'center',
-    paddingTop: space.xl,
-    gap: space.lg,
+    gap: space.md,
   },
-  successIconOuter: {
+  mayaAssistantIcon: {
+    fontSize: 24,
+  },
+  mayaAssistantTextCol: {
+    flex: 1,
+  },
+  mayaAssistantTitle: {
+    fontFamily: font.sansBold,
+    fontSize: 13,
+    color: palette.accent,
+  },
+  mayaAssistantSub: {
+    fontFamily: font.sansReg,
+    fontSize: 11,
+    color: palette.ink3,
+    marginTop: 2,
+  },
+
+  /* Quiz inline feedback explanation */
+  quizExplanationInline: {
+    backgroundColor: palette.accentSoft,
+    borderWidth: 1,
+    borderColor: palette.line,
+    borderRadius: radius.xl,
+    padding: space.lg,
+  },
+  explanationInlineTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+  },
+  explanationInlineTitle: {
+    fontFamily: font.sansBold,
+    fontSize: 9,
+    color: palette.accent,
+    letterSpacing: 1.2,
+  },
+  explanationInlineBody: {
+    fontFamily: font.sansReg,
+    fontSize: 13,
+    color: palette.accentInk,
+    lineHeight: 19,
+  },
+  bottomNextContainer: {
+    marginTop: space.md,
+  },
+
+  /* Results Card screen */
+  resultsWrapper: {
+    flex: 1,
+    padding: space.xl,
+    justifyContent: 'center',
+  },
+  resultsCard: {
+    backgroundColor: palette.card,
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    borderColor: palette.line,
+    padding: space.xl,
+    alignItems: 'center',
+  },
+  awardCircleBig: {
     width: 80,
     height: 80,
     borderRadius: 40,
     backgroundColor: palette.accentSoft,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: space.sm,
+    marginBottom: space.lg,
   },
-  summaryTitle: {
+  resultsCongratulations: {
     fontFamily: font.serifBold,
-    fontSize: 26,
+    fontSize: 22,
     color: palette.ink,
+    textAlign: 'center',
+    marginBottom: 4,
   },
-  summaryTopicName: {
-    fontFamily: font.sansMed,
-    fontSize: 15,
+  resultsTopicTitle: {
+    fontFamily: font.sansReg,
+    fontSize: 14,
     color: palette.ink2,
     textAlign: 'center',
-    paddingHorizontal: space.xl,
-    marginTop: -space.sm,
+    marginBottom: space.xl,
   },
-  summaryCard: {
+  resultsGrid: {
+    flexDirection: 'row',
     width: '100%',
-    alignItems: 'center',
-    gap: space.sm,
-    paddingVertical: space.xxl,
+    backgroundColor: palette.paper,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: palette.line,
+    paddingVertical: space.lg,
+    marginBottom: space.xl,
   },
-  summaryScoreLabel: {
-    fontFamily: font.sansSemi,
-    fontSize: 10,
+  resultsGridItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  resultsGridDivider: {
+    width: 1,
+    backgroundColor: palette.line,
+  },
+  resultsNum: {
+    fontFamily: font.serifBold,
+    fontSize: 28,
+    color: palette.accent,
+  },
+  resultsLabel: {
+    fontFamily: font.sansBold,
+    fontSize: 8,
     color: palette.ink3,
     letterSpacing: 1,
+    marginTop: 4,
   },
-  summaryScoreNum: {
-    fontFamily: font.serifBold,
-    fontSize: 48,
-    color: palette.ink,
-  },
-  summaryPerformance: {
-    fontFamily: font.sansBold,
-    fontSize: 14,
-    color: palette.accent,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  xpAwardBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FEF3C7',
-    borderColor: palette.gold,
-    borderWidth: 1,
-    borderRadius: radius.pill,
-    paddingVertical: 6,
-    paddingHorizontal: 16,
-    gap: 6,
-  },
-  xpAwardText: {
-    fontFamily: font.sansSemi,
-    fontSize: 12.5,
-    color: '#92400E',
-  },
-  summaryButtons: {
+  resultsActionsContainer: {
     width: '100%',
     gap: space.md,
-    marginTop: space.md,
+    alignItems: 'center',
   },
-  summaryBtn: {
+  resultsBtn: {
     width: '100%',
   },
-  backToHubLink: {
-    alignSelf: 'center',
-    paddingVertical: space.md,
+  retryPracticeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    marginTop: space.sm,
   },
-  backToHubText: {
+  retryPracticeText: {
     fontFamily: font.sansSemi,
+    fontSize: 12,
+    color: palette.ink2,
+  },
+
+  /* QUICK REFERENCE TAB STYLES */
+  quickRefContent: {
+    padding: space.xl,
+    paddingBottom: 80,
+  },
+  quickRefSectionLabel: {
+    fontFamily: font.sansBold,
+    fontSize: 9,
+    color: palette.ink3,
+    letterSpacing: 1,
+    marginTop: space.lg,
+    marginBottom: space.sm,
+  },
+  quickRefFormulaBox: {
+    backgroundColor: palette.paper,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: palette.line,
+    padding: space.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  quickRefFormulaText: {
+    fontFamily: Platform.OS === 'ios' ? 'Courier New' : 'monospace',
+    fontSize: 12,
+    color: palette.ink,
+    flex: 1,
+    marginRight: space.md,
+  },
+  formulaCopyButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    padding: 6,
+    backgroundColor: palette.card,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: palette.line,
+  },
+  formulaCopyText: {
+    fontFamily: font.sansSemi,
+    fontSize: 10,
+    color: palette.accent,
+  },
+  quickRefBodyText: {
+    fontFamily: font.sansMed,
     fontSize: 14,
     color: palette.accent,
+    marginBottom: 4,
+  },
+  quickRefExplanation: {
+    fontFamily: font.sansReg,
+    fontSize: 13,
+    color: palette.ink2,
+    lineHeight: 18,
+  },
+  quickRefExamplesList: {
+    gap: space.md,
+  },
+  quickRefExampleRow: {
+    flexDirection: 'row',
+    gap: space.md,
+  },
+  quickRefExampleDot: {
+    fontSize: 16,
+    color: palette.accent,
+    lineHeight: 18,
+  },
+  quickRefExampleSentence: {
+    fontFamily: font.sansMed,
+    fontSize: 13,
+    color: palette.ink,
+    marginBottom: 2,
+  },
+  quickRefExampleTranslation: {
+    fontFamily: font.sansReg,
+    fontSize: 11,
+    color: palette.ink3,
+    fontStyle: 'italic',
+  },
+
+  /* CHALLENGE TIMED TAB STYLES */
+  challengeScaffold: {
+    flex: 1,
+    padding: space.xl,
+    justifyContent: 'center',
+  },
+  challengeCenterCard: {
+    alignItems: 'center',
+  },
+  challengeMainTitle: {
+    fontFamily: font.serifBold,
+    fontSize: 22,
+    color: palette.ink,
+    textAlign: 'center',
+    marginBottom: 2,
+  },
+  challengeSubtitle: {
+    fontFamily: font.sansReg,
+    fontSize: 12,
+    color: palette.ink3,
+    textAlign: 'center',
+    marginBottom: space.xl,
+  },
+  challengeRulesContainer: {
+    width: '100%',
+    backgroundColor: palette.paper,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: palette.line,
+    padding: space.lg,
+    gap: space.md,
+    marginBottom: space.lg,
+  },
+  ruleBullet: {
+    flexDirection: 'row',
+    gap: space.md,
+    alignItems: 'center',
+  },
+  challengeRuleText: {
+    fontFamily: font.sansReg,
+    fontSize: 12,
+    color: palette.ink2,
+    flex: 1,
+    lineHeight: 16,
+  },
+
+  /* Countdown screen */
+  countdownBox: {
+    alignItems: 'center',
+  },
+  countdownTitle: {
+    fontFamily: font.sansBold,
+    fontSize: 14,
+    color: palette.ink3,
+    letterSpacing: 2,
+    marginBottom: space.md,
+  },
+  countdownNumber: {
+    fontFamily: font.serifBold,
+    fontSize: 72,
+    color: palette.amber,
+  },
+
+  /* Gameplay view */
+  playingScaffold: {
+    paddingHorizontal: space.xl,
+    paddingTop: space.lg,
+    paddingBottom: 60,
+  },
+  gameplayHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: space.lg,
+    gap: 8,
+  },
+  timerPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    backgroundColor: palette.card,
+    borderWidth: 1,
+    borderColor: palette.line,
+  },
+  timerPillText: {
+    fontFamily: font.sansBold,
+    fontSize: 12,
+    color: palette.accent,
+  },
+  streakPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    backgroundColor: palette.card,
+    borderWidth: 1,
+    borderColor: palette.line,
+  },
+  streakPillText: {
+    fontFamily: font.sansBold,
+    fontSize: 12,
+    color: palette.amber,
+  },
+  scorePill: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    backgroundColor: palette.accent,
+    borderWidth: 1,
+    borderColor: palette.accent,
+  },
+  scorePillText: {
+    fontFamily: font.sansBold,
+    fontSize: 12,
+    color: '#FFFFFF',
+  },
+  challengeGameOverTitle: {
+    fontFamily: font.serifBold,
+    fontSize: 22,
+    color: '#C75450',
+    textAlign: 'center',
+    marginBottom: 2,
   },
 });

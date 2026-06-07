@@ -55,7 +55,9 @@ app.add_middleware(
 
 # ── Routers ──────────────────────────────────────────────────────────
 
-app.include_router(api_router, prefix="/api/v1")
+API_PREFIX = "/api/v1"
+
+app.include_router(api_router, prefix=API_PREFIX)
 
 
 # ── Health check ─────────────────────────────────────────────────────

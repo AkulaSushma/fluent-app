@@ -38,6 +38,7 @@ from app.db.models import (
     DailyPlan,
 )
 from app.db.session import async_session_factory, engine
+from app.seed.seed_cognitive import seed_cognitive
 
 DEMO_EMAIL = "demo@fluent.app"
 DEMO_NAME = "Aarav Kapoor"
@@ -126,6 +127,7 @@ async def seed() -> None:
         existing = result.scalar_one_or_none()
         if existing:
             print(f"[SUCCESS] Demo user already exists (id={existing.id})")
+            await seed_cognitive(db)
             await db.commit()
             return
 
@@ -354,6 +356,9 @@ async def seed() -> None:
         )
         db.add(daily_plan)
         print("  [SUCCESS] Created today's daily plan (2/6 tasks completed)")
+
+        # Call cognitive pattern engine seeder
+        await seed_cognitive(db)
 
         await db.commit()
         print("\n[SUCCESS] Seeding complete!")

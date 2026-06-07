@@ -1,4 +1,17 @@
 import { Platform } from 'react-native';
+import { NativeModulesProxy } from 'expo-modules-core';
+
+// Stub missing ExpoTopicSubscriptionModule in NativeModulesProxy for Expo Go compatibility.
+// This avoids attempting to write directly to the native JSI expo.modules HostObject (which throws).
+if (NativeModulesProxy && !NativeModulesProxy.ExpoTopicSubscriptionModule) {
+  NativeModulesProxy.ExpoTopicSubscriptionModule = {
+    addListener: () => {},
+    removeListeners: () => {},
+    subscribeToTopicAsync: () => Promise.resolve(null),
+    unsubscribeFromTopicAsync: () => Promise.resolve(null),
+  };
+}
+
 
 let Notifications: any = null;
 let isNotificationsSupported = false;
@@ -20,7 +33,7 @@ try {
     }),
   });
 } catch (e) {
-  console.warn(
+  console.log(
     '[Notifications] expo-notifications is not supported in this environment (e.g. Expo Go SDK 56):',
     e
   );
@@ -49,17 +62,21 @@ export async function requestNotificationPermissions(): Promise<boolean> {
 
     // Setup Android high importance notification channel
     if (Platform.OS === 'android') {
-      await Notifications.setNotificationChannelAsync('default', {
-        name: 'Default Alerts',
-        importance: Notifications.AndroidImportance.MAX,
-        vibrationPattern: [0, 250, 250, 250],
-        lightColor: '#6366F1',
-      });
+      try {
+        await Notifications.setNotificationChannelAsync('default', {
+          name: 'Default Alerts',
+          importance: Notifications.AndroidImportance.MAX,
+          vibrationPattern: [0, 250, 250, 250],
+          lightColor: '#6366F1',
+        });
+      } catch (channelErr) {
+        console.log('[Notifications] Channel setup skipped (Expo Go compatibility):', channelErr);
+      }
     }
 
     return true;
   } catch (err) {
-    console.warn('[Notifications] Failed to request permissions:', err);
+    console.log('[Notifications] Failed to request permissions:', err);
     return false;
   }
 }
@@ -105,8 +122,12 @@ export async function scheduleDailyReminders(
           sound: true,
           data: { screen: 'Plan' },
         },
-        trigger: {
+        trigger: Platform.OS === 'ios' ? {
           type: Notifications.SchedulableTriggerInputTypes.CALENDAR,
+          hour: morningHour,
+          minute: morningMinute,
+          repeats: true,
+        } : {
           hour: morningHour,
           minute: morningMinute,
           repeats: true,
@@ -130,8 +151,12 @@ export async function scheduleDailyReminders(
           sound: true,
           data: { screen: 'Review' },
         },
-        trigger: {
+        trigger: Platform.OS === 'ios' ? {
           type: Notifications.SchedulableTriggerInputTypes.CALENDAR,
+          hour: eveningHour,
+          minute: eveningMinute,
+          repeats: true,
+        } : {
           hour: eveningHour,
           minute: eveningMinute,
           repeats: true,
@@ -145,3 +170,32 @@ export async function scheduleDailyReminders(
     console.error('[Notifications] scheduleDailyReminders error:', err);
   }
 }
+
+/**
+ * Schedules a local push reminder for the 24-Hour Rule.
+ */
+export async function scheduleSpeakReminder(word: string, nodeId: string) {
+  if (Platform.OS === 'web' || !isNotificationsSupported || !Notifications) {
+    return;
+  }
+
+  try {
+    const fireAt = new Date(Date.now() + 20 * 60 * 60 * 1000); // 20 hours later
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: 'Say it out loud ✦',
+        body: `You learned "${word}" yesterday. Use it in a sentence today to lock it in.`,
+        sound: true,
+        data: { screen: 'Teleprompter', word }, // navigates to Speak/Teleprompter tab
+      },
+      trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.DATE,
+        date: fireAt,
+      },
+    });
+    console.log(`[Notifications] Scheduled 24h speak reminder for "${word}"`);
+  } catch (err) {
+    console.error('[Notifications] Failed to schedule speak reminder:', err);
+  }
+}
+

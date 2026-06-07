@@ -15,7 +15,7 @@ from app.core.security import verify_token
 from app.db.models import User
 from app.db.session import async_session_factory
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login")
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
