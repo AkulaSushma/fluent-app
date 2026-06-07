@@ -320,14 +320,10 @@ export default function TeleprompterScreen() {
       <Header
         title="Pronunciation"
         right={
-          result ? (
-            <PressableScale onPress={handleRetry} style={styles.retryHeaderBtn}>
-              <Ionicons name="refresh" size={16} color="#FFFFFF" />
-              <Text style={styles.retryHeaderBtnText}>Retry</Text>
-            </PressableScale>
-          ) : (
-            <View style={styles.backSpacer} />
-          )
+          <PressableScale onPress={handleRetry} style={styles.retryHeaderBtn}>
+            <Ionicons name="refresh" size={16} color="#FFFFFF" />
+            <Text style={styles.retryHeaderBtnText}>Retry</Text>
+          </PressableScale>
         }
       />
 

@@ -122,12 +122,8 @@ export async function scheduleDailyReminders(
           sound: true,
           data: { screen: 'Plan' },
         },
-        trigger: Platform.OS === 'ios' ? {
-          type: Notifications.SchedulableTriggerInputTypes.CALENDAR,
-          hour: morningHour,
-          minute: morningMinute,
-          repeats: true,
-        } : {
+        trigger: {
+          type: Notifications.SchedulableTriggerInputTypes.DAILY,
           hour: morningHour,
           minute: morningMinute,
           repeats: true,
@@ -151,12 +147,8 @@ export async function scheduleDailyReminders(
           sound: true,
           data: { screen: 'Review' },
         },
-        trigger: Platform.OS === 'ios' ? {
-          type: Notifications.SchedulableTriggerInputTypes.CALENDAR,
-          hour: eveningHour,
-          minute: eveningMinute,
-          repeats: true,
-        } : {
+        trigger: {
+          type: Notifications.SchedulableTriggerInputTypes.DAILY,
           hour: eveningHour,
           minute: eveningMinute,
           repeats: true,

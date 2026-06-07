@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import * as SecureStore from 'expo-secure-store';
 import { api, setAuthToken, onUnauthorized } from '../api/client';
+import { scheduleDailyReminders } from '../utils/notifications';
 import type {
   FlashCard,
   CurriculumTaskOut,
@@ -631,6 +632,13 @@ export const useStore = create<StoreState>((set, get) => ({
     try {
       const settings = await api.getSettings();
       set({ userSettings: settings });
+      if (settings) {
+        scheduleDailyReminders(
+          settings.morning_reminder_time,
+          settings.evening_reminder_time,
+          settings.reminders_enabled
+        ).catch((err) => console.warn('Failed to schedule local reminders:', err));
+      }
     } catch (err) {
       console.error('Failed to fetch settings:', err);
     }
@@ -641,6 +649,13 @@ export const useStore = create<StoreState>((set, get) => ({
       const updated = await api.updateSettings(settings);
       set({ userSettings: updated });
       get().showToast('⚙️', 'Settings updated successfully');
+      if (updated) {
+        scheduleDailyReminders(
+          updated.morning_reminder_time,
+          updated.evening_reminder_time,
+          updated.reminders_enabled
+        ).catch((err) => console.warn('Failed to schedule local reminders:', err));
+      }
     } catch (err: any) {
       console.error('Failed to update settings:', err);
       get().showToast('❌', err.message || 'Failed to update settings');

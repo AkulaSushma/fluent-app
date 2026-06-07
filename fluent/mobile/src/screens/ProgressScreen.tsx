@@ -37,8 +37,14 @@ function AnimatedStreakNumber({ value, isFocused }: { value: number; isFocused: 
       setIsAnimating(false);
       return;
     }
+
+    const start = 0;
+    const targetMax = value + 10;
     const end = value;
-    const duration = 1200; // 1.2 seconds count up
+
+    const durationUp = 800; // 0.8 seconds to count up to max
+    const durationDown = 600; // 0.6 seconds to count back down to value
+    const totalDuration = durationUp + durationDown;
     const startTime = Date.now();
     setIsAnimating(true);
 
@@ -47,18 +53,28 @@ function AnimatedStreakNumber({ value, isFocused }: { value: number; isFocused: 
     const animate = () => {
       const now = Date.now();
       const elapsed = now - startTime;
-      const progress = Math.min(elapsed / duration, 1);
-      const easedProgress = progress * (2 - progress); // Ease out quad
-      const current = easedProgress * end;
 
-      if (progress < 1) {
+      if (elapsed < durationUp) {
+        // Phase 1: Count Up to targetMax
+        const progress = elapsed / durationUp;
+        const easedProgress = progress * (2 - progress); // Ease out quad
+        const current = start + easedProgress * (targetMax - start);
+        setDisplayValue(current);
+        animationFrameId = requestAnimationFrame(animate);
+      } else if (elapsed < totalDuration) {
+        // Phase 2: Count Down to end (value)
+        const progress = (elapsed - durationUp) / durationDown;
+        const easedProgress = progress * (2 - progress); // Ease out quad
+        const current = targetMax - easedProgress * (targetMax - end);
         setDisplayValue(current);
         animationFrameId = requestAnimationFrame(animate);
       } else {
+        // Finished
         setDisplayValue(end);
         setIsAnimating(false);
       }
     };
+
     animationFrameId = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(animationFrameId);
   }, [value, isFocused]);
