@@ -17,6 +17,7 @@ from app.api.v1.srs import router as srs_router
 from app.api.v1.tutor import router as tutor_router
 from app.api.v1.vocab import router as vocab_router
 from app.api.v1.cognitive import router as cognitive_router
+from app.api.v1.content import router as content_router
 
 api_router = APIRouter()
 
@@ -33,4 +34,5 @@ api_router.include_router(gamification_router)
 api_router.include_router(settings_router)
 api_router.include_router(coach_router)
 api_router.include_router(cognitive_router)
+api_router.include_router(content_router)
 

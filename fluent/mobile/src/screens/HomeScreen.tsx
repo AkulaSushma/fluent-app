@@ -52,10 +52,14 @@ export default function HomeScreen() {
     dailyPlanProgress,
     morningTasks,
     eveningTasks,
+    grammarTopics,
+    challenges,
     fetchProgress,
     fetchCurriculumToday,
     fetchXpState,
     fetchSettings,
+    fetchGrammarTopics,
+    fetchChallenges,
   } = useStore();
 
   const [recommendation, setRecommendation] = useState<string>(
@@ -64,11 +68,13 @@ export default function HomeScreen() {
 
   const loadHomeData = async () => {
     try {
-      const [_, __, ___, ____, rec] = await Promise.all([
+      const [_, __, ___, ____, _____, ______, rec] = await Promise.all([
         fetchProgress(),
         fetchCurriculumToday(),
         fetchXpState(),
         fetchSettings(),
+        fetchGrammarTopics(),
+        fetchChallenges(),
         api.getContentRecommendation(),
       ]);
       setRecommendation(rec.message);
@@ -83,36 +89,44 @@ export default function HomeScreen() {
     }
   }, [isFocused]);
 
+  const allCurrentTasks = [...morningTasks, ...eveningTasks];
+  const isTTCompleted = allCurrentTasks.some(t => t.type === 'pronunciation' && t.completed);
+  const isSpeakingCompleted = allCurrentTasks.some(t => t.type === 'speaking' && t.completed);
+  const isTutorCompleted = allCurrentTasks.some(t => (t.type === 'tutor' || t.type === 'chat') && t.completed);
+  const isReaderCompleted = allCurrentTasks.some(t => t.type === 'reading' && t.completed);
+  const isCoachCompleted = allCurrentTasks.some(t => t.type === 'speaking' && t.completed);
+  const isObjectCompleted = allCurrentTasks.some(t => t.type === 'vocab' && t.completed);
+
   const LESSONS = [
     {
       id: 'grammar',
       emoji: '🧩',
       title: 'Grammar lessons',
-      sub: 'Mon/Thu checkpoint',
-      pct: 0.4,
+      sub: grammarTopics ? `${Math.round(grammarTopics.overallMastery)}% overall mastery` : 'Structure and rules',
+      pct: grammarTopics ? (grammarTopics.overallMastery / 100) : 0.0,
       screen: 'Grammar',
     },
     {
       id: 'tongue_twister',
       emoji: '🗣️',
       title: 'Tongue Twister',
-      sub: 'Speech training',
-      pct: 0.0,
+      sub: isTTCompleted ? 'Completed today' : 'Daily voice drills',
+      pct: isTTCompleted ? 1.0 : 0.0,
       screen: 'TongueTwister',
     },
     {
       id: 'pronunciation',
       emoji: '🎙️',
       title: 'Speaking Lab',
-      sub: 'Evaluate pronunciation',
-      pct: 0.65,
+      sub: isSpeakingCompleted ? 'Completed today' : 'Evaluate pronunciation',
+      pct: isSpeakingCompleted ? 1.0 : 0.0,
       screen: 'Teleprompter',
     },
     {
       id: 'vocab',
       emoji: '💼',
       title: 'Vocabulary Deck',
-      sub: `${Math.round(deck.progress * 100)}% complete`,
+      sub: deck.progress > 0 ? `${Math.round(deck.progress * 100)}% complete` : 'Active memory deck',
       pct: deck.progress,
       screen: 'Vocab',
     },
@@ -120,32 +134,32 @@ export default function HomeScreen() {
       id: 'tutor',
       emoji: '🤖',
       title: 'AI Tutor Chat',
-      sub: 'Practice conversation',
-      pct: 0.8,
+      sub: isTutorCompleted ? 'Completed today' : 'Practice conversation',
+      pct: isTutorCompleted ? 1.0 : 0.0,
       screen: 'Tutor',
     },
     {
       id: 'corporate_coach',
       emoji: '💼',
       title: 'Corporate Coach',
-      sub: 'Professional speak',
-      pct: 0.0,
+      sub: isCoachCompleted ? 'Completed today' : 'Professional speak',
+      pct: isCoachCompleted ? 1.0 : 0.0,
       screen: 'CorporateCoach',
     },
     {
       id: 'tech_article',
       emoji: '📰',
       title: 'Executive Reader',
-      sub: 'Analyze trade-offs',
-      pct: 0.0,
+      sub: isReaderCompleted ? 'Completed today' : 'Analyze trade-offs',
+      pct: isReaderCompleted ? 1.0 : 0.0,
       screen: 'TechArticle',
     },
     {
       id: 'object_naming',
       emoji: '🖼️',
       title: 'Object Naming',
-      sub: 'What is this called?',
-      pct: 0.5,
+      sub: isObjectCompleted ? 'Completed today' : 'What is this called?',
+      pct: isObjectCompleted ? 1.0 : 0.0,
       screen: 'ObjectNaming',
     },
   ];
@@ -324,6 +338,93 @@ export default function HomeScreen() {
                 : `${goalMinutes - todayMinutes} more minutes to hit your daily target.`}
             </Text>
           </View>
+        </View>
+      </Card>
+
+      {/* ── Daily Challenges Card ──────────────────────── */}
+      <Card index={4.5}>
+        <View style={styles.challengesHeader}>
+          <Text style={styles.sectionTitle}>Daily Challenges</Text>
+          <View style={styles.challengesPill}>
+            <Text style={styles.challengesPillText}>TODAY</Text>
+          </View>
+        </View>
+        
+        <View style={styles.challengesList}>
+          {challenges && challenges.length > 0 ? (
+            challenges.map((challenge) => {
+              // Custom colors based on challenge id
+              let accentColor: string = palette.accent;
+              let bgAccentColor: string = palette.accentSoft;
+              if (challenge.id === 'daily_vocab') {
+                accentColor = palette.amber;
+                bgAccentColor = palette.amberSoft;
+              } else if (challenge.id === 'daily_practice') {
+                accentColor = palette.accent;
+                bgAccentColor = palette.accentSoft;
+              } else if (challenge.id === 'daily_srs') {
+                accentColor = palette.gold;
+                bgAccentColor = 'rgba(217, 164, 65, 0.12)';
+              }
+
+              return (
+                <View key={challenge.id} style={styles.challengeItem}>
+                  <View style={styles.challengeRow}>
+                    <View style={[styles.challengeEmojiBg, { backgroundColor: bgAccentColor }]}>
+                      <Text style={styles.challengeEmoji}>{challenge.emoji}</Text>
+                    </View>
+                    
+                    <View style={styles.challengeContent}>
+                      <View style={styles.challengeTitleRow}>
+                        <Text style={styles.challengeTitle}>{challenge.title}</Text>
+                        {challenge.completed ? (
+                          <View style={styles.xpBadgeDone}>
+                            <Text style={styles.xpBadgeTextDone}>+{challenge.xp_reward} XP</Text>
+                          </View>
+                        ) : (
+                          <View style={styles.xpBadge}>
+                            <Text style={styles.xpBadgeText}>+{challenge.xp_reward} XP</Text>
+                          </View>
+                        )}
+                      </View>
+                      <Text style={styles.challengeDesc}>{challenge.description}</Text>
+                      
+                      <View style={styles.challengeProgressContainer}>
+                        <View style={styles.challengeProgressBarTrack}>
+                          <LinearGradient
+                            colors={[accentColor, accentColor]}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 0 }}
+                            style={[
+                              styles.challengeProgressBarFill,
+                              { width: `${challenge.progress * 100}%` as any },
+                            ]}
+                          />
+                        </View>
+                        <Text style={styles.challengeProgressVal}>
+                          {Math.round(challenge.progress * 100)}%
+                        </Text>
+                      </View>
+                    </View>
+
+                    <View style={styles.challengeStatus}>
+                      {challenge.completed ? (
+                        <View style={[styles.challengeCheckCircle, { backgroundColor: accentColor }]}>
+                          <Ionicons name="checkmark" size={14} color="#FFFFFF" />
+                        </View>
+                      ) : (
+                        <View style={styles.challengePendingCircle}>
+                          <Ionicons name="ellipse-outline" size={18} color={palette.ink3} />
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                </View>
+              );
+            })
+          ) : (
+            <ActivityIndicator size="small" color={palette.accent} style={{ marginVertical: space.md }} />
+          )}
         </View>
       </Card>
 
@@ -856,5 +957,127 @@ const styles = StyleSheet.create({
   progressFill: {
     height: 5,
     borderRadius: 3,
+  },
+  challengesHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: space.md,
+  },
+  challengesPill: {
+    backgroundColor: palette.accentSoft,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+  },
+  challengesPillText: {
+    fontFamily: font.sansBold,
+    fontSize: 10,
+    color: palette.accent,
+    letterSpacing: 1,
+  },
+  challengesList: {
+    gap: space.md,
+  },
+  challengeItem: {
+    paddingVertical: 4,
+  },
+  challengeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+  },
+  challengeEmojiBg: {
+    width: 44,
+    height: 44,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  challengeEmoji: {
+    fontSize: 22,
+  },
+  challengeContent: {
+    flex: 1,
+  },
+  challengeTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 2,
+  },
+  challengeTitle: {
+    fontFamily: font.sansBold,
+    fontSize: 14.5,
+    color: palette.ink,
+  },
+  challengeDesc: {
+    fontFamily: font.sansReg,
+    fontSize: 12,
+    color: palette.ink3,
+    marginBottom: 6,
+  },
+  challengeProgressContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+  },
+  challengeProgressBarTrack: {
+    flex: 1,
+    height: 6,
+    borderRadius: radius.sm,
+    backgroundColor: palette.line2,
+    overflow: 'hidden',
+  },
+  challengeProgressBarFill: {
+    height: '100%',
+    borderRadius: radius.sm,
+  },
+  challengeProgressVal: {
+    fontFamily: font.sansSemi,
+    fontSize: 11,
+    color: palette.ink2,
+    width: 32,
+    textAlign: 'right',
+  },
+  challengeStatus: {
+    width: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  challengeCheckCircle: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  challengePendingCircle: {
+    width: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  xpBadge: {
+    backgroundColor: palette.line2,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  xpBadgeText: {
+    fontFamily: font.sansBold,
+    fontSize: 9,
+    color: palette.ink2,
+  },
+  xpBadgeDone: {
+    backgroundColor: palette.accentSoft,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  xpBadgeTextDone: {
+    fontFamily: font.sansBold,
+    fontSize: 9,
+    color: palette.accent,
   },
 });

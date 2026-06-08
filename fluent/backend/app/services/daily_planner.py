@@ -8,12 +8,22 @@ evening sessions to encourage distributed practice.
 
 import uuid
 from datetime import date, datetime, timezone
-
-from sqlalchemy import select
+from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    try:
+        import pytz
+        def ZoneInfo(tz_name):
+            return pytz.timezone(tz_name)
+    except ImportError:
+        def ZoneInfo(tz_name):
+            return timezone.utc
 
-from app.db.models import DailyPlan, User, XPSource, XPTransaction
-from app.services import curriculum_service, srs_engine
+from app.db.models import DailyPlan, User, XPSource, XPTransaction, ContentItem, UserItemState, ContentType, CefrLevel
+from app.services import curriculum_service
 
 
 # ── Public API ──────────────────────────────────────────────────────
@@ -42,7 +52,22 @@ async def generate_daily_plan(db: AsyncSession, user_id: str) -> dict:
 
     Returns the full plan dict.
     """
-    today = date.today()
+    # ── Fetch user to get timezone ────────────────────────────────────
+    stmt = select(User).where(User.id == user_id)
+    result = await db.execute(stmt)
+    user = result.scalar_one_or_none()
+    if not user:
+        raise LookupError(f"User '{user_id}' not found.")
+
+    tz_str = user.timezone or "UTC"
+    try:
+        user_tz = ZoneInfo(tz_str)
+    except Exception:
+        user_tz = timezone.utc
+
+    now_utc = datetime.now(timezone.utc)
+    now_local = now_utc.astimezone(user_tz)
+    today = now_local.date()
 
     # ── Return existing plan if already generated ────────────────────
     existing = await _get_existing_plan(db, user_id, today)
@@ -57,8 +82,6 @@ async def generate_daily_plan(db: AsyncSession, user_id: str) -> dict:
         await curriculum_service.initialize_curriculum(db, user_id)
         curriculum = await curriculum_service.get_user_today(db, user_id)
 
-    due_count = await srs_engine.get_due_count(db, user_id)
-
     vocab_theme: str = curriculum.get("vocab_theme", "daily_life")
     grammar_topic: str = curriculum.get("grammar_topic", "Present Perfect")
     reading_level: str = curriculum.get("reading_level", "intermediate")
@@ -67,10 +90,101 @@ async def generate_daily_plan(db: AsyncSession, user_id: str) -> dict:
     # Scale individual task XP so the total roughly equals the day reward
     base_xp = max(10, day_xp // 6)
 
+    # Map user level to CefrLevel enum
+    user_level = user.level or "intermediate"
+    if user_level == "beginner":
+        user_cefr = CefrLevel.A2
+    elif user_level == "advanced":
+        user_cefr = CefrLevel.C1
+    else:  # intermediate or default
+        user_cefr = CefrLevel.B2
+
+    # ── Fetch reviewed item IDs to exclude them ───────────────────────
+    reviewed_q = select(UserItemState.item_id).where(UserItemState.user_id == user_id)
+    reviewed_res = await db.execute(reviewed_q)
+    reviewed_ids = [r[0] for r in reviewed_res.all()]
+
+    async def fetch_unreviewed_items(item_type: ContentType, count: int, theme: str | None = None, cefr: CefrLevel | None = None) -> list[ContentItem]:
+        q = select(ContentItem).where(
+            and_(
+                ContentItem.active == True,
+                ContentItem.type == item_type
+            )
+        )
+        if reviewed_ids:
+            q = q.where(ContentItem.id.notin_(reviewed_ids))
+        
+        if theme:
+            q = q.where(ContentItem.topic.ilike(f"%{theme}%"))
+            
+        if cefr:
+            q = q.where(ContentItem.cefr == cefr)
+            
+        res = await db.execute(q.limit(count))
+        items = res.scalars().all()
+        
+        # Fallback if not enough unreviewed items
+        if len(items) < count:
+            needed = count - len(items)
+            try:
+                from app.services.ai_content_generator import generate_and_save_ai_content
+                fallback_theme = theme or "general"
+                fallback_cefr = cefr or user_cefr
+                
+                generated = await generate_and_save_ai_content(
+                    db=db,
+                    item_type=item_type,
+                    cefr=fallback_cefr,
+                    theme_or_topic=fallback_theme,
+                    count=needed
+                )
+                items = list(items) + generated
+            except Exception as e:
+                import logging
+                logging.error(f"AI content generation failed: {e}. Falling back to reviewed database items.")
+                
+                fallback_q = select(ContentItem).where(
+                    and_(
+                        ContentItem.active == True,
+                        ContentItem.type == item_type
+                    )
+                )
+                if theme:
+                    fallback_q = fallback_q.where(ContentItem.topic.ilike(f"%{theme}%"))
+                if cefr:
+                    fallback_q = fallback_q.where(ContentItem.cefr == cefr)
+                res_fb = await db.execute(fallback_q.limit(count))
+                items = res_fb.scalars().all()
+            
+        return items
+
+    # Query content items using user's personalized CEFR level
+    vocab_items = await fetch_unreviewed_items(ContentType.vocab, 8, theme=vocab_theme, cefr=user_cefr)
+    vocab_ids = [item.id for item in vocab_items]
+
+    grammar_items = await fetch_unreviewed_items(ContentType.grammar, 1, theme=grammar_topic, cefr=user_cefr)
+    grammar_id = grammar_items[0].id if grammar_items else None
+
+    pronunciation_items = await fetch_unreviewed_items(ContentType.pronunciation, 1, cefr=user_cefr)
+    pronunciation_id = pronunciation_items[0].id if pronunciation_items else None
+
+    reading_items = await fetch_unreviewed_items(ContentType.reading, 1, cefr=user_cefr)
+    reading_id = reading_items[0].id if reading_items else None
+
+    # Get active SRS due cards
+    srs_q = select(UserItemState.item_id).where(
+        and_(
+            UserItemState.user_id == user_id,
+            UserItemState.due_at <= now_utc
+        )
+    ).limit(20)
+    srs_res = await db.execute(srs_q)
+    due_ids = [r[0] for r in srs_res.all()]
+
     # ── Build morning tasks ──────────────────────────────────────────
     morning_tasks: list[dict] = [
         {
-            "id": _task_id(),
+            "id": "morning_pronunciation",
             "type": "pronunciation",
             "title": "Pronunciation Warm-up",
             "subtitle": "Practise today's sounds and intonation patterns",
@@ -78,9 +192,10 @@ async def generate_daily_plan(db: AsyncSession, user_id: str) -> dict:
             "xp_reward": base_xp,
             "completed": False,
             "screen": "Teleprompter",
+            "content_ids": [pronunciation_id] if pronunciation_id else []
         },
         {
-            "id": _task_id(),
+            "id": "morning_vocab",
             "type": "vocab",
             "title": f"Vocabulary: {_pretty(vocab_theme)}",
             "subtitle": f"Learn new {_pretty(vocab_theme)} words and phrases",
@@ -89,9 +204,10 @@ async def generate_daily_plan(db: AsyncSession, user_id: str) -> dict:
             "completed": False,
             "screen": "Vocab",
             "theme": vocab_theme,
+            "content_ids": vocab_ids
         },
         {
-            "id": _task_id(),
+            "id": "morning_grammar",
             "type": "grammar",
             "title": f"Grammar: {grammar_topic}",
             "subtitle": f"Interactive lesson on {grammar_topic}",
@@ -100,19 +216,20 @@ async def generate_daily_plan(db: AsyncSession, user_id: str) -> dict:
             "completed": False,
             "screen": "Grammar",
             "topic": grammar_topic,
+            "content_ids": [grammar_id] if grammar_id else []
         },
     ]
 
     # ── Build evening tasks ──────────────────────────────────────────
     srs_subtitle = (
-        f"Review {due_count} due card{'s' if due_count != 1 else ''}"
-        if due_count > 0
+        f"Review {len(due_ids)} due card{'s' if len(due_ids) != 1 else ''}"
+        if due_ids
         else "No cards due — great job keeping up!"
     )
 
     evening_tasks: list[dict] = [
         {
-            "id": _task_id(),
+            "id": "evening_vocab_review",
             "type": "vocab_review",
             "title": f"Review: {_pretty(vocab_theme)} Vocabulary",
             "subtitle": "Reinforce this morning's new words",
@@ -121,9 +238,10 @@ async def generate_daily_plan(db: AsyncSession, user_id: str) -> dict:
             "completed": False,
             "screen": "Review",
             "theme": vocab_theme,
+            "content_ids": vocab_ids
         },
         {
-            "id": _task_id(),
+            "id": "evening_srs_review",
             "type": "srs_review",
             "title": "Spaced Repetition Review",
             "subtitle": srs_subtitle,
@@ -131,17 +249,19 @@ async def generate_daily_plan(db: AsyncSession, user_id: str) -> dict:
             "xp_reward": base_xp,
             "completed": False,
             "screen": "Review",
+            "content_ids": due_ids
         },
         {
-            "id": _task_id(),
+            "id": "evening_reading",
             "type": "reading",
             "title": "Reading Practice",
-            "subtitle": f"Read and comprehend a {reading_level}-level passage",
+            "subtitle": f"Read and comprehend a {user_level}-level passage",
             "duration_minutes": 10,
             "xp_reward": base_xp,
             "completed": False,
             "screen": "Teleprompter",
-            "level": reading_level,
+            "level": user_level,
+            "content_ids": [reading_id] if reading_id else []
         },
     ]
 
@@ -174,7 +294,23 @@ async def complete_task(
     Raises:
         LookupError: If no plan exists for today or the task_id is invalid.
     """
-    today = date.today()
+    # Resolve user local today date
+    stmt = select(User).where(User.id == user_id)
+    result = await db.execute(stmt)
+    user = result.scalar_one_or_none()
+    if not user:
+        raise LookupError(f"User '{user_id}' not found.")
+
+    tz_str = user.timezone or "UTC"
+    try:
+        user_tz = ZoneInfo(tz_str)
+    except Exception:
+        user_tz = timezone.utc
+
+    now_utc = datetime.now(timezone.utc)
+    now_local = now_utc.astimezone(user_tz)
+    today = now_local.date()
+
     plan = await _get_existing_plan(db, user_id, today)
     if plan is None:
         raise LookupError("No daily plan found for today. Generate one first.")
@@ -203,8 +339,34 @@ async def complete_task(
     # Persist mutated JSON
     if found_in == "morning":
         plan.morning_tasks = morning
+        flag_modified(plan, "morning_tasks")
     else:
         plan.evening_tasks = evening
+        flag_modified(plan, "evening_tasks")
+
+    # Initialize UserItemState for all items in the task to exclude them from future plan generation
+    content_ids = task.get("content_ids") or []
+    for item_id in content_ids:
+        state_stmt = select(UserItemState).where(
+            and_(
+                UserItemState.user_id == user_id,
+                UserItemState.item_id == item_id
+            )
+        )
+        state_res = await db.execute(state_stmt)
+        state = state_res.scalar_one_or_none()
+        if not state:
+            state = UserItemState(
+                user_id=user_id,
+                item_id=item_id,
+                stability=2.5,
+                difficulty=5.0,
+                due_at=now_utc,
+                reps=0,
+                lapses=0,
+                last_reviewed=None
+            )
+            db.add(state)
 
     # Check if all tasks are done
     progress = _calc_progress(morning, evening)
@@ -229,7 +391,22 @@ async def get_plan_progress(db: AsyncSession, user_id: str) -> float:
 
     Returns 0.0 if no plan has been generated yet.
     """
-    today = date.today()
+    stmt = select(User).where(User.id == user_id)
+    result = await db.execute(stmt)
+    user = result.scalar_one_or_none()
+    if not user:
+        return 0.0
+
+    tz_str = user.timezone or "UTC"
+    try:
+        user_tz = ZoneInfo(tz_str)
+    except Exception:
+        user_tz = timezone.utc
+
+    now_utc = datetime.now(timezone.utc)
+    now_local = now_utc.astimezone(user_tz)
+    today = now_local.date()
+
     plan = await _get_existing_plan(db, user_id, today)
     if plan is None:
         return 0.0

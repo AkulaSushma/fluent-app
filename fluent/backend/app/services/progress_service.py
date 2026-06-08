@@ -153,11 +153,19 @@ async def log_session(
     await db.flush()
     streak = await update_streak(db, user_id)
 
+    # Trigger personalized difficulty evaluation if score is provided
+    level_changed_to = None
+    if score is not None:
+        from app.services.adaptive_engine import evaluate_and_update_user_level
+        level_changed_to = await evaluate_and_update_user_level(db, user_id)
+
     return {
         "session_id": log_entry.id,
         "streak_days": streak,
         "today_minutes": record.minutes_practiced,
+        "level_changed_to": level_changed_to,
     }
+
 
 
 async def get_trends(db: AsyncSession, user_id: str) -> dict[str, Any]:

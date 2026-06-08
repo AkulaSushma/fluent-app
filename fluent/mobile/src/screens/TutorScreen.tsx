@@ -161,6 +161,33 @@ export default function TutorScreen() {
     }, 100);
   };
 
+  // Load conversation history on mount
+  useEffect(() => {
+    let isMounted = true;
+    const fetchHistory = async () => {
+      try {
+        const history = await api.getTutorHistory();
+        if (isMounted && history && history.length > 0) {
+          const mapped: Message[] = history.map((m, idx) => ({
+            id: `hist_${idx}_${Date.now()}`,
+            role: m.role as 'user' | 'assistant',
+            content: m.content,
+          }));
+          setMessages(mapped);
+          setTimeout(() => {
+            flatListRef.current?.scrollToEnd({ animated: false });
+          }, 200);
+        }
+      } catch (err) {
+        console.error('Failed to load chat history:', err);
+      }
+    };
+    fetchHistory();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   const handleSendMessage = async (textToSend: string) => {
     if (!textToSend.trim() || isTyping) return;
 

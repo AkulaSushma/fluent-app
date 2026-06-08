@@ -49,9 +49,9 @@ export default function GrammarScreen() {
   const route = useRoute<any>();
   const navigation = useNavigation<any>();
 
-  const topicId = route.params?.topicId || '';
-  const topicParam = route.params?.topic || 'Present Perfect vs Past Simple';
-  const levelParam = route.params?.level || 'intermediate';
+  const topicId = route.params?.topicId || route.params?.params?.topicId || '';
+  const topicParam = route.params?.topic || route.params?.params?.topic || 'Present Perfect vs Past Simple';
+  const levelParam = route.params?.level || route.params?.params?.level || 'intermediate';
 
   const {
     showToast,

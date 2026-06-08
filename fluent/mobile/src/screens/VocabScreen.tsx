@@ -224,7 +224,7 @@ function FlashCardView({
 export default function VocabScreen() {
   const insets = useSafeAreaInsets();
   const route = useRoute<any>();
-  const themeParam = route.params?.theme || 'corporate';
+  const themeParam = route.params?.theme || route.params?.params?.theme || 'corporate';
 
   // Initialize sound effects players
   const successPlayer = useAudioPlayer();
@@ -283,7 +283,7 @@ export default function VocabScreen() {
     setEvaluationResult(null);
     attemptCountRef.current = 0;
 
-    if (isDeckComplete || !isVoiceMode) return;
+    if (total === 0 || isDeckComplete || !isVoiceMode) return;
 
     // 1. Speak target word automatically
     const targetWord = cards[current].word;
@@ -537,6 +537,23 @@ export default function VocabScreen() {
 
   const secondScale = 0.92;
   const thirdScale = 0.84;
+
+  if (total === 0) {
+    return (
+      <View style={[styles.screen, { paddingTop: insets.top }]}>
+        <Header
+          title={themeParam.charAt(0).toUpperCase() + themeParam.slice(1) + ' Vocab'}
+          showBack={true}
+        />
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: palette.paper }}>
+          <ActivityIndicator size="large" color={palette.accent} />
+          <Text style={{ marginTop: 10, color: palette.ink3, fontFamily: font.sansMed }}>
+            Loading vocabulary deck...
+          </Text>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>

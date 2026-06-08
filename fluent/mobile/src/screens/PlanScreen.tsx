@@ -62,7 +62,7 @@ export default function PlanScreen() {
     } else if (task.type === 'pronunciation' || task.type === 'speaking' || task.type === 'reading') {
       targetStack = 'TeleprompterStack';
       targetScreen = 'Teleprompter';
-      params = { level: task.level };
+      params = { level: task.level, type: task.type };
     } else if (task.type === 'srs' || task.type === 'review' || task.type === 'vocab_review') {
       targetStack = 'ReviewStack';
       targetScreen = 'Review';

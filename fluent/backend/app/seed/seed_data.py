@@ -39,6 +39,7 @@ from app.db.models import (
 )
 from app.db.session import async_session_factory, engine
 from app.seed.seed_cognitive import seed_cognitive
+from app.seed.seed_content import seed_content
 
 DEMO_EMAIL = "demo@fluent.app"
 DEMO_NAME = "Aarav Kapoor"
@@ -359,6 +360,9 @@ async def seed() -> None:
 
         # Call cognitive pattern engine seeder
         await seed_cognitive(db)
+
+        # Call content library seeder
+        await seed_content(db)
 
         await db.commit()
         print("\n[SUCCESS] Seeding complete!")

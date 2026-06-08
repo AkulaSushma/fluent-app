@@ -57,9 +57,59 @@ async def get_card_by_word(
 async def get_deck(
     theme: str = Query("corporate", min_length=1, max_length=100),
     count: int = Query(8, ge=1, le=20),
-    _current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """Generate a vocabulary deck for a given theme."""
+    from app.services.daily_planner import _get_existing_plan
+    from app.db.models import ContentItem
+    from zoneinfo import ZoneInfo
+    
+    # Get user's local today date
+    tz_str = current_user.timezone or "UTC"
+    try:
+        user_tz = ZoneInfo(tz_str)
+    except Exception:
+        user_tz = timezone.utc
+    now_local = datetime.now(timezone.utc).astimezone(user_tz)
+    today = now_local.date()
+    
+    plan = await _get_existing_plan(db, current_user.id, today)
+    
+    content_ids = []
+    if plan:
+        for t in (plan.morning_tasks or []):
+            if t.get("type") == "vocab" and t.get("content_ids"):
+                content_ids = t.get("content_ids")
+                break
+        if not content_ids:
+            for t in (plan.evening_tasks or []):
+                if t.get("type") in ("vocab", "vocab_review") and t.get("content_ids"):
+                    content_ids = t.get("content_ids")
+                    break
+
+    if content_ids:
+        # Fetch content items matching content_ids
+        stmt = select(ContentItem).where(ContentItem.id.in_(content_ids))
+        res = await db.execute(stmt)
+        items = res.scalars().all()
+        # Sort items in the order of content_ids
+        item_map = {item.id: item for item in items}
+        sorted_items = [item_map[cid] for cid in content_ids if cid in item_map]
+        
+        cards = []
+        for item in sorted_items:
+            payload = item.payload
+            cards.append({
+                "word": payload.get("word"),
+                "ipa": payload.get("phonetic") or payload.get("ipa", "/.../"),
+                "definition": payload.get("definition"),
+                "example": payload.get("example"),
+                "hindi": payload.get("hindi", ""),
+                "telugu": payload.get("telugu", "")
+            })
+        return {"cards": cards}
+
     data = await generate_vocab_deck(theme, count)
     return VocabDeckResponse(**data)
 

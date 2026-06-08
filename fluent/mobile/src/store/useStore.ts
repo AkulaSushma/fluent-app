@@ -27,76 +27,6 @@ import type {
   WordFamilyOut,
 } from '../api/client';
 
-/* ------------------------------------------------------------------ */
-/*  Fallback flashcard deck                                            */
-/* ------------------------------------------------------------------ */
-
-const FALLBACK_CARDS: FlashCard[] = [
-  {
-    word: 'Synergy',
-    ipa: '/ˈsɪn.ər.dʒi/',
-    definition:
-      'The combined effect of a group that exceeds the sum of individual efforts.',
-    example:
-      'The synergy between the design and engineering teams led to a breakthrough product.',
-  },
-  {
-    word: 'Leverage',
-    ipa: '/ˈlev.ər.ɪdʒ/',
-    definition:
-      'To use a resource or advantage to its maximum potential.',
-    example:
-      'We should leverage our existing client relationships to expand into the new market.',
-  },
-  {
-    word: 'Streamline',
-    ipa: '/ˈstriːm.laɪn/',
-    definition:
-      'To make a process or system more efficient by simplifying it.',
-    example:
-      'The new software will streamline our onboarding process significantly.',
-  },
-  {
-    word: 'Stakeholder',
-    ipa: '/ˈsteɪk.hoʊl.dər/',
-    definition:
-      'A person or group with an interest or concern in a business or project.',
-    example:
-      'All key stakeholders were invited to review the quarterly results.',
-  },
-  {
-    word: 'Bandwidth',
-    ipa: '/ˈbænd.wɪdθ/',
-    definition:
-      'The capacity to handle tasks or workload at a given time.',
-    example:
-      "I don't have the bandwidth to take on another project this sprint.",
-  },
-  {
-    word: 'Pivot',
-    ipa: '/ˈpɪv.ət/',
-    definition:
-      'To fundamentally change the direction or strategy of a business.',
-    example:
-      'After the initial launch failed, the startup decided to pivot to a B2B model.',
-  },
-  {
-    word: 'Scalable',
-    ipa: '/ˈskeɪ.lə.bəl/',
-    definition:
-      'Capable of being expanded or adapted to handle growth.',
-    example:
-      'We need a scalable infrastructure that can support ten times our current user base.',
-  },
-  {
-    word: 'Onboard',
-    ipa: '/ˈɒn.bɔːrd/',
-    definition:
-      'To integrate a new employee or client into an organisation or system.',
-    example:
-      'HR will onboard the new hires with a two-week training programme.',
-  },
-].map((c, idx) => ({ ...c, id: (idx + 1).toString() }));
 
 export interface FlashCardDeck {
   id: string;
@@ -282,17 +212,17 @@ export const useStore = create<StoreState>((set, get) => ({
   },
 
   /* intelligence state */
-  curriculumDay: 24,
+  curriculumDay: 1,
   curriculumPhase: 'foundation',
-  srsDueCount: 10,
-  xp: 2700,
-  xpLevel: 8,
-  xpLevelTitle: 'Expert',
-  xpProgress: 0.5,
-  xpNextThreshold: 3800,
-  seriousnessScore: 82,
-  seriousnessLabel: 'Obsessed',
-  dailyPlanProgress: 0.33,
+  srsDueCount: 0,
+  xp: 0,
+  xpLevel: 1,
+  xpLevelTitle: 'Novice',
+  xpProgress: 0.0,
+  xpNextThreshold: 100,
+  seriousnessScore: 0,
+  seriousnessLabel: 'Casual',
+  dailyPlanProgress: 0.0,
   morningTasks: [],
   eveningTasks: [],
   achievements: [],
@@ -316,7 +246,7 @@ export const useStore = create<StoreState>((set, get) => ({
     id: 'corporate-vocab',
     title: 'Corporate Vocab',
     emoji: '💼',
-    cards: FALLBACK_CARDS,
+    cards: [],
     progress: 0,
   },
   currentCardIndex: 0,
@@ -547,6 +477,7 @@ export const useStore = create<StoreState>((set, get) => ({
       await api.markVocabMastered(word);
       // Update statistics after mastering a card
       await get().fetchProgress();
+      await get().fetchChallenges();
     } catch (err) {
       console.error('Failed to mark card as mastered:', err);
     }
@@ -556,6 +487,7 @@ export const useStore = create<StoreState>((set, get) => ({
     try {
       await api.logSession(sessionType, duration, score);
       await get().fetchProgress();
+      await get().fetchChallenges();
     } catch (err) {
       console.error('Failed to log practice session:', err);
     }

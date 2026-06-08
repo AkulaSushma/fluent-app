@@ -62,6 +62,9 @@ def _build_tasks(
             xp_reward=item.get("xp_reward", curriculum_day.xp_reward // 4),
             completed=task_id in completed_ids,
             screen=item.get("screen", ""),
+            theme=item.get("theme"),
+            topic=item.get("topic"),
+            level=item.get("level"),
         ))
     return tasks
 
@@ -179,26 +182,30 @@ async def get_today(
             xp_reward=100,
         )
 
-    today = date.today()
-    plan = await _get_daily_plan(db, user.id, today)
+    # Generate daily plan dynamically using the user's timezone
+    from app.services.daily_planner import generate_daily_plan
+    plan_dict = await generate_daily_plan(db, user.id)
 
-    # Determine which tasks are already completed
+    morning_tasks = plan_dict.get("morning_tasks", [])
+    evening_tasks = plan_dict.get("evening_tasks", [])
+
+    # Determine completed tasks from the active plan configuration
     completed_ids: set[str] = set()
-    if plan and plan.morning_tasks and isinstance(plan.morning_tasks, dict):
-        for tid in plan.morning_tasks.get("completed", []):
-            completed_ids.add(tid)
-    if plan and plan.evening_tasks and isinstance(plan.evening_tasks, dict):
-        for tid in plan.evening_tasks.get("completed", []):
-            completed_ids.add(tid)
+    for task in morning_tasks:
+        if task.get("completed"):
+            completed_ids.add(task.get("id"))
+    for task in evening_tasks:
+        if task.get("completed"):
+            completed_ids.add(task.get("id"))
 
     morning = _build_tasks(
-        plan.morning_tasks if plan else None,
+        morning_tasks,
         "morning",
         curriculum_day,
         completed_ids,
     )
     evening = _build_tasks(
-        plan.evening_tasks if plan else None,
+        evening_tasks,
         "evening",
         curriculum_day,
         completed_ids,
@@ -264,86 +271,57 @@ async def complete_task(
     for the day are done, advances the user to the next day.
     """
     progress = await _get_or_create_progress(db, user.id)
-    today = date.today()
 
-    # Fetch or create today's plan
+    # Resolve user local today date
+    from zoneinfo import ZoneInfo
+    tz_str = user.timezone or "UTC"
+    try:
+        user_tz = ZoneInfo(tz_str)
+    except Exception:
+        user_tz = timezone.utc
+
+    now_local = datetime.now(timezone.utc).astimezone(user_tz)
+    today = now_local.date()
+
+    # Fetch or generate today's plan
     plan = await _get_daily_plan(db, user.id, today)
     if plan is None:
-        plan = DailyPlan(
-            user_id=user.id,
-            date=today,
-            morning_tasks={"tasks": [], "completed": []},
-            evening_tasks={"tasks": [], "completed": []},
-        )
-        db.add(plan)
-        await db.flush()
+        from app.services.daily_planner import generate_daily_plan
+        await generate_daily_plan(db, user.id)
+        plan = await _get_daily_plan(db, user.id, today)
+        if plan is None:
+            raise HTTPException(status_code=500, detail="Failed to retrieve or generate daily plan")
 
-    # Record completion in the appropriate slot
-    task_id: str = body.task_id
-    already_completed = False
+    was_completed_before = plan.completed
 
-    morning_data = plan.morning_tasks if isinstance(plan.morning_tasks, dict) else {"tasks": [], "completed": []}
-    evening_data = plan.evening_tasks if isinstance(plan.evening_tasks, dict) else {"tasks": [], "completed": []}
+    # Mark complete via planner
+    from app.services.daily_planner import complete_task as planner_complete_task
+    res = await planner_complete_task(db, user.id, body.task_id)
+    xp_awarded = res["xp_awarded"]
+    plan_completed = res["plan_completed"]
 
-    if task_id in morning_data.get("completed", []) or task_id in evening_data.get("completed", []):
-        already_completed = True
+    day_complete = plan_completed
 
-    if not already_completed:
-        if task_id.startswith("morning"):
-            morning_data.setdefault("completed", []).append(task_id)
-            plan.morning_tasks = morning_data
-        else:
-            evening_data.setdefault("completed", []).append(task_id)
-            plan.evening_tasks = evening_data
-
-    db.add(plan)
-    await db.flush()
-
-    # Award XP for completing the task
-    xp_amount = 25  # base XP per task
-    xp_state: dict = {}
-    if not already_completed:
-        xp_state = await award_xp(
-            db, user.id, xp_amount, "daily_plan",
-            f"Completed curriculum task: {task_id}",
-        )
-
-    # Check if all tasks for the day are done → advance day
-    all_completed_ids: set[str] = set(
-        morning_data.get("completed", []) + evening_data.get("completed", [])
-    )
-
-    # Fetch curriculum day to know expected task count
-    day_q = select(CurriculumDay).where(
-        CurriculumDay.day_number == progress.current_day,
-    )
-    curriculum_day = (await db.execute(day_q)).scalar_one_or_none()
-
-    # Expected: 2 morning + 2 evening = 4 tasks by default
-    expected_count = 4
-    if curriculum_day and curriculum_day.xp_reward:
-        # If custom task counts are stored we'd use them, otherwise default to 4
-        pass
-
-    day_complete = len(all_completed_ids) >= expected_count
-
-    if day_complete and not plan.completed:
-        plan.completed = True
-        plan.total_xp = xp_amount * expected_count
-        db.add(plan)
-
+    if day_complete and not was_completed_before:
         # Advance curriculum day
         progress.current_day = min(progress.current_day + 1, 90)
         progress.phase = _phase_for_day(progress.current_day)
         db.add(progress)
         await db.flush()
 
+    xp_state = {
+        "xp": user.xp,
+        "level": user.xp_level,
+        "title": f"Level {user.xp_level}",
+        "progress_to_next": 0.0,
+    }
+
     return {
-        "task_id": task_id,
-        "already_completed": already_completed,
+        "task_id": body.task_id,
+        "already_completed": xp_awarded == 0,
         "day_complete": day_complete,
         "current_day": progress.current_day,
-        "xp_awarded": xp_amount if not already_completed else 0,
+        "xp_awarded": xp_awarded,
         "xp_state": xp_state,
     }
 

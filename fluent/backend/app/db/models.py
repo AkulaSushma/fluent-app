@@ -86,6 +86,7 @@ class User(TimestampMixin, Base):
     streak_days: Mapped[int] = mapped_column(Integer, default=0)
     fluency_score: Mapped[float] = mapped_column(Float, default=0.0)
     total_words: Mapped[int] = mapped_column(Integer, default=0)
+    timezone: Mapped[str] = mapped_column(String(64), default="UTC", server_default="UTC")
 
     # Gamification
     xp: Mapped[int] = mapped_column(Integer, default=0)
@@ -135,6 +136,9 @@ class User(TimestampMixin, Base):
         back_populates="user", cascade="all, delete-orphan"
     )
     story_mnemonics: Mapped[list["StoryMnemonic"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    tutor_messages: Mapped[list["TutorMessage"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
 
@@ -576,4 +580,81 @@ class UserChallengeProgress(TimestampMixin, Base):
 
     user: Mapped["User"] = relationship(back_populates="challenge_progress")
     challenge: Mapped["Challenge"] = relationship()
+
+
+# ── Content Item (Stage 1) ──────────────────────────────────────────
+
+
+class ContentType(str, enum.Enum):
+    vocab = "vocab"
+    grammar = "grammar"
+    pronunciation = "pronunciation"
+    reading = "reading"
+    conversation = "conversation"
+
+
+class CefrLevel(str, enum.Enum):
+    A2 = "A2"
+    B1 = "B1"
+    B2 = "B2"
+    C1 = "C1"
+    C2 = "C2"
+
+
+class ContentSource(str, enum.Enum):
+    seed = "seed"
+    ai = "ai"
+
+
+class ContentItem(TimestampMixin, Base):
+    __tablename__ = "content_items"
+
+    type: Mapped[ContentType] = mapped_column(Enum(ContentType), nullable=False)
+    cefr: Mapped[CefrLevel] = mapped_column(Enum(CefrLevel), nullable=False)
+    topic: Mapped[str] = mapped_column(String(256), nullable=False)
+    difficulty: Mapped[float] = mapped_column(Float, default=0.5, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    source: Mapped[ContentSource] = mapped_column(Enum(ContentSource), default=ContentSource.seed, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+
+class UserItemState(Base):
+    __tablename__ = "user_item_states"
+
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    item_id: Mapped[str] = mapped_column(ForeignKey("content_items.id"), primary_key=True)
+    stability: Mapped[float] = mapped_column(Float, default=2.5)
+    difficulty: Mapped[float] = mapped_column(Float, default=5.0)
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    reps: Mapped[int] = mapped_column(Integer, default=0)
+    lapses: Mapped[int] = mapped_column(Integer, default=0)
+    last_reviewed: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    user: Mapped["User"] = relationship()
+    item: Mapped["ContentItem"] = relationship()
+
+
+class DailySession(Base):
+    __tablename__ = "daily_sessions"
+
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    session_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    items_served: Mapped[dict] = mapped_column(JSON, default=list)
+    completed: Mapped[dict] = mapped_column(JSON, default=list)
+
+    user: Mapped["User"] = relationship()
+
+
+# ── Tutor Message ───────────────────────────────────────────────────
+
+
+class TutorMessage(TimestampMixin, Base):
+    __tablename__ = "tutor_messages"
+
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String(32), nullable=False)  # "user" or "assistant"
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+
+    user: Mapped["User"] = relationship(back_populates="tutor_messages")
+
 

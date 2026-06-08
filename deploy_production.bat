@@ -43,7 +43,6 @@ echo   - View real-time logs:     pm2 logs
 echo   - Monitor all processes:   pm2 monit
 echo   - Stop all services:       pm2 stop all
 echo   - Restart backend:         pm2 restart fluent-backend
-echo   - Restart tunnel/proxy:    pm2 restart fluent-tunnel
 echo   - Restart Metro bundler:   pm2 restart fluent-mobile
 echo.
 pause

@@ -267,3 +267,66 @@ async def recommend_content(db: AsyncSession, user_id: str) -> str:
 
     # Fallback
     return "Keep up the great work — every session counts!"
+
+
+async def evaluate_and_update_user_level(db: AsyncSession, user_id: str) -> str | None:
+    """
+    Evaluate the user's recent performance and adjust their CEFR level if needed.
+    Fetches the last 3 completed SessionLog entries with scores for the user.
+    If the average score is >= 85%, promote their level:
+      "beginner" -> "intermediate" -> "advanced".
+    If the average score is < 65%, demote their level:
+      "advanced" -> "intermediate" -> "beginner".
+    
+    Returns the new level if changed, else None.
+    """
+    # Fetch the user
+    user = await db.get(User, user_id)
+    if user is None:
+        return None
+
+    # Fetch the last 3 completed SessionLog entries with scores for this user
+    q = (
+        select(SessionLog)
+        .where(
+            SessionLog.user_id == user_id,
+            SessionLog.score.is_not(None),
+        )
+        .order_by(SessionLog.created_at.desc())
+        .limit(3)
+    )
+    result = await db.execute(q)
+    logs = result.scalars().all()
+
+    # We need at least 3 completed scored sessions to evaluate level changes
+    if len(logs) < 3:
+        return None
+
+    # Calculate average score
+    avg_score = sum(log.score for log in logs) / len(logs)
+
+    # Level hierarchy
+    levels = ["beginner", "intermediate", "advanced"]
+    current_level = user.level
+    if current_level not in levels:
+        current_level = "intermediate"  # fallback default
+    
+    current_index = levels.index(current_level)
+    new_index = current_index
+
+    if avg_score >= 85.0:
+        if current_index < 2:
+            new_index = current_index + 1
+    elif avg_score < 65.0:
+        if current_index > 0:
+            new_index = current_index - 1
+
+    if new_index != current_index:
+        new_level = levels[new_index]
+        user.level = new_level
+        db.add(user)
+        await db.flush()
+        return new_level
+
+    return None
+

@@ -85,7 +85,8 @@ function EqBar({ index, isRecording }: { index: number; isRecording: boolean }) 
 export default function TeleprompterScreen() {
   const insets = useSafeAreaInsets();
   const route = useRoute<any>();
-  const levelParam = route.params?.level || 'advanced';
+  const levelParam = route.params?.level || route.params?.params?.level || 'advanced';
+  const typeParam = route.params?.type || route.params?.params?.type || 'pronunciation';
   
   const { showToast, logPracticeSession, curriculumDay } = useStore();
 
@@ -185,7 +186,7 @@ export default function TeleprompterScreen() {
       setIsLoading(true);
       setResult(null);
       const dayParam = isNewText ? 0 : curriculumDay;
-      const res = await api.getRandomArticle(levelParam, dayParam);
+      const res = await api.getRandomArticle(levelParam, dayParam, typeParam);
       setArticle(res);
       setIsLoading(false);
     } catch (err) {
@@ -196,7 +197,7 @@ export default function TeleprompterScreen() {
 
   useEffect(() => {
     fetchArticle(false);
-  }, [levelParam, curriculumDay]);
+  }, [levelParam, curriculumDay, typeParam]);
 
   async function startRecording() {
     try {
@@ -274,7 +275,7 @@ export default function TeleprompterScreen() {
   if (isLoading || !article) {
     return (
       <View style={[styles.screen, { paddingTop: insets.top, justifyContent: 'center', alignItems: 'center' }]}>
-        <Header title="Pronunciation" />
+        <Header title={typeParam === 'reading' ? 'Reading Practice' : 'Pronunciation'} />
         <ActivityIndicator size="large" color={palette.accent} />
       </View>
     );
@@ -318,7 +319,7 @@ export default function TeleprompterScreen() {
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <Header
-        title="Pronunciation"
+        title={typeParam === 'reading' ? 'Reading Practice' : 'Pronunciation'}
         right={
           <PressableScale onPress={handleRetry} style={styles.retryHeaderBtn}>
             <Ionicons name="refresh" size={16} color="#FFFFFF" />

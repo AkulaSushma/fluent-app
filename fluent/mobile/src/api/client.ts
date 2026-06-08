@@ -1,6 +1,6 @@
 import { Platform } from 'react-native';
 
-const FALLBACK = 'http://192.168.1.100:8000/api/v1';
+const FALLBACK = 'https://fluent-app-production.up.railway.app/api/v1';
 export const BASE_URL = (process.env.EXPO_PUBLIC_API_URL || FALLBACK).replace(/\/+$/, '');
 
 /* ------------------------------------------------------------------ */
@@ -753,8 +753,8 @@ export const api = {
   },
 
   /* articles / teleprompter */
-  getRandomArticle: (level: string = 'advanced', day?: number) =>
-    request<ArticleResponse>(`/articles/random?level=${level}${day !== undefined ? `&day=${day}` : ''}`),
+  getRandomArticle: (level: string = 'advanced', day?: number, type: string = 'pronunciation') =>
+    request<ArticleResponse>(`/articles/random?level=${level}${day !== undefined ? `&day=${day}` : ''}&type=${type}`),
 
   /* progress & session tracking */
   getProgress: () => request<UserProgressResponse>('/progress/me'),
@@ -782,6 +782,9 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ history, message }),
     }),
+
+  getTutorHistory: () =>
+    request<{ role: 'user' | 'assistant'; content: string }[]>('/tutor/history'),
 
   /* srs (spaced repetition) */
   getSrsDue: (limit: number = 20) =>

@@ -39,14 +39,85 @@ _TOPICS = [
 async def random_article(
     level: str = Query("advanced", pattern="^(beginner|intermediate|advanced)$"),
     day: int | None = None,
+    type: str = Query("pronunciation", pattern="^(pronunciation|reading)$"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get a teleprompter article sequentially based on day to avoid repetitions.
+    """Get a teleprompter article or pronunciation passage based on the daily plan and task type."""
+    from app.services.daily_planner import _get_existing_plan
+    from app.db.models import ContentItem
+    from zoneinfo import ZoneInfo
+    from sqlalchemy import select
     
-    If day is not specified, defaults to the user's current curriculum day.
-    If day <= 0 is passed, returns a random choice (used for manual 'New Text' refreshes).
-    """
+    # Resolve user local today date
+    tz_str = current_user.timezone or "UTC"
+    try:
+        user_tz = ZoneInfo(tz_str)
+    except Exception:
+        user_tz = timezone.utc
+    now_local = datetime.now(timezone.utc).astimezone(user_tz)
+    today = now_local.date()
+    
+    plan = await _get_existing_plan(db, current_user.id, today)
+    
+    item = None
+    if plan and day is not None and day > 0:
+        if type == "pronunciation":
+            target_task = None
+            for t in (plan.morning_tasks or []):
+                if t.get("type") == "pronunciation":
+                    target_task = t
+                    break
+            if target_task and target_task.get("content_ids"):
+                item_id = target_task.get("content_ids")[0]
+                stmt = select(ContentItem).where(ContentItem.id == item_id)
+                res = await db.execute(stmt)
+                item = res.scalar_one_or_none()
+        elif type == "reading":
+            target_task = None
+            for t in (plan.evening_tasks or []):
+                if t.get("type") == "reading":
+                    target_task = t
+                    break
+            if target_task and target_task.get("content_ids"):
+                item_id = target_task.get("content_ids")[0]
+                stmt = select(ContentItem).where(ContentItem.id == item_id)
+                res = await db.execute(stmt)
+                item = res.scalar_one_or_none()
+
+    if item:
+        payload = item.payload
+        if item.type == "pronunciation":
+            return ArticleResponse(
+                title="Pronunciation Warm-up",
+                content=payload.get("sentence"),
+                word_count=len(payload.get("sentence", "").split()),
+                explanation=payload.get("tip", "Focus phonemes: " + ", ".join(payload.get("focus_phonemes", [])))
+            )
+        else:  # reading
+            return ArticleResponse(
+                title=payload.get("title"),
+                content=payload.get("body"),
+                word_count=len(payload.get("body", "").split()),
+                explanation=payload.get("explanation", "Read the text carefully and practice your pacing.")
+            )
+
+    # Fallback to random/sequential generation if not found or if day <= 0 (new text refresh)
+    if type == "pronunciation":
+        # Select a random pronunciation item from the database
+        from sqlalchemy import func
+        stmt = select(ContentItem).where(ContentItem.type == "pronunciation").order_by(func.random()).limit(1)
+        res = await db.execute(stmt)
+        rand_item = res.scalar_one_or_none()
+        if rand_item:
+            payload = rand_item.payload
+            return ArticleResponse(
+                title="Pronunciation Practice",
+                content=payload.get("sentence"),
+                word_count=len(payload.get("sentence", "").split()),
+                explanation=payload.get("tip", "Focus phonemes: " + ", ".join(payload.get("focus_phonemes", [])))
+            )
+
     if day is None:
         from app.services.curriculum_service import _get_progress
         try:

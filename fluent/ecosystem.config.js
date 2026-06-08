@@ -12,15 +12,7 @@ module.exports = {
         ENV: "production"
       }
     },
-    {
-      name: "fluent-tunnel",
-      script: "backend/.venv/Scripts/python.exe",
-      args: "run_ssh_tunnel.py",
-      cwd: "../",
-      watch: false,
-      autorestart: true,
-      max_restarts: 15
-    },
+
     {
       name: "fluent-mobile",
       script: "node_modules/expo/bin/cli",
