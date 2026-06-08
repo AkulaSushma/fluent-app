@@ -20,8 +20,8 @@ import app.db.models  # noqa
 # access to the values within the .ini file in use.
 config = context.config
 
-# Override the url with settings.DATABASE_URL
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+# Override the url with settings.DATABASE_URL (escaping % to %% to prevent configparser interpolation errors)
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL.replace("%", "%%"))
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
