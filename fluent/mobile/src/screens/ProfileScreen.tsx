@@ -21,7 +21,7 @@ import Button from '@/components/Button';
 import { palette, radius, space, shadow } from '@/theme/tokens';
 import { font } from '@/theme/typography';
 import { useStore } from '@/store/useStore';
-import { scheduleDailyReminders, requestNotificationPermissions } from '@/utils/notifications';
+import { requestNotificationPermissions } from '@/utils/notifications';
 
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
@@ -69,11 +69,6 @@ export default function ProfileScreen() {
       setGeminiKeyInput(userSettings.gemini_api_key || '');
       setOpenrouterKeyInput(userSettings.openrouter_api_key || '');
       setGroqKeyInput(userSettings.groq_api_key || '');
-      scheduleDailyReminders(
-        userSettings.morning_reminder_time,
-        userSettings.evening_reminder_time,
-        userSettings.reminders_enabled
-      ).catch((err) => console.warn('Failed to schedule local reminders:', err));
     }
   }, [userSettings]);
 

@@ -102,11 +102,15 @@ export async function scheduleDailyReminders(
       return;
     }
 
-    // Verify permissions are active
-    const { status } = await Notifications.getPermissionsAsync();
+    // Verify permissions are active, attempt request if not granted
+    let { status } = await Notifications.getPermissionsAsync();
     if (status !== 'granted') {
-      console.log('[Notifications] Permission not granted. Skipping scheduling.');
-      return;
+      console.log('[Notifications] Permission not granted. Attempting to request...');
+      const granted = await requestNotificationPermissions();
+      if (!granted) {
+        console.log('[Notifications] Notification permission request denied. Skipping scheduling.');
+        return;
+      }
     }
 
     // 2. Schedule Daily Morning Learning reminder
@@ -127,6 +131,7 @@ export async function scheduleDailyReminders(
           hour: morningHour,
           minute: morningMinute,
           repeats: true,
+          channelId: Platform.OS === 'android' ? 'default' : undefined,
         },
       });
       console.log(`[Notifications] Scheduled daily morning reminder at ${morningTimeStr}`);
@@ -152,6 +157,7 @@ export async function scheduleDailyReminders(
           hour: eveningHour,
           minute: eveningMinute,
           repeats: true,
+          channelId: Platform.OS === 'android' ? 'default' : undefined,
         },
       });
       console.log(`[Notifications] Scheduled daily evening reminder at ${eveningTimeStr}`);
@@ -183,6 +189,7 @@ export async function scheduleSpeakReminder(word: string, nodeId: string) {
       trigger: {
         type: Notifications.SchedulableTriggerInputTypes.DATE,
         date: fireAt,
+        channelId: Platform.OS === 'android' ? 'default' : undefined,
       },
     });
     console.log(`[Notifications] Scheduled 24h speak reminder for "${word}"`);

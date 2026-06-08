@@ -44,10 +44,17 @@ export default function App() {
   const isLoadingAuth = useStore((s) => s.isLoadingAuth);
 
   React.useEffect(() => {
-    if (fontsLoaded) {
-      autoAuthenticate();
-      requestNotificationPermissions();
-    }
+    const initializeApp = async () => {
+      if (fontsLoaded) {
+        try {
+          await requestNotificationPermissions();
+        } catch (e) {
+          console.warn('Failed to request notification permissions on startup:', e);
+        }
+        await autoAuthenticate();
+      }
+    };
+    initializeApp();
   }, [fontsLoaded, autoAuthenticate]);
 
   if (!fontsLoaded || isLoadingAuth) {
