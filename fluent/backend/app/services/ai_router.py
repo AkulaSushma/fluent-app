@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 from typing import Any
+from collections.abc import AsyncGenerator
 
 import httpx
 
@@ -18,7 +19,10 @@ from app.core.config import settings
 
 log = logging.getLogger(__name__)
 
-_TIMEOUT = httpx.Timeout(60.0, connect=10.0)
+# Hard timeouts for each provider
+_TIMEOUT_GROQ = httpx.Timeout(15.0, connect=5.0)
+_TIMEOUT_GEMINI = httpx.Timeout(20.0, connect=5.0)
+_TIMEOUT_OPENROUTER = httpx.Timeout(20.0, connect=5.0)
 
 
 class AIUnavailable(Exception):
@@ -75,7 +79,7 @@ async def _groq(
     if json_mode:
         body["response_format"] = {"type": "json_object"}
 
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+    async with httpx.AsyncClient(timeout=_TIMEOUT_GROQ) as client:
         resp = await client.post(
             "https://api.groq.com/openai/v1/chat/completions",
             headers={
@@ -91,6 +95,54 @@ async def _groq(
         resp.raise_for_status()
         data = resp.json()
         return data["choices"][0]["message"]["content"]
+
+
+async def _groq_stream(
+    messages: list[dict],
+    json_mode: bool = False,
+    fast: bool = False,
+) -> AsyncGenerator[str, None]:
+    """Call Groq's streaming endpoint."""
+    if not settings.GROQ_API_KEY:
+        raise AIUnavailable("GROQ_API_KEY not configured")
+
+    model = settings.GROQ_MODEL_FAST if fast else settings.GROQ_MODEL
+    body: dict[str, Any] = {
+        "model": model,
+        "messages": _openai_messages(messages),
+        "temperature": 0.7,
+        "stream": True,
+    }
+    if json_mode:
+        body["response_format"] = {"type": "json_object"}
+
+    async with httpx.AsyncClient(timeout=_TIMEOUT_GROQ) as client:
+        async with client.stream(
+            "POST",
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {settings.GROQ_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json=body,
+        ) as resp:
+            if resp.status_code == 429:
+                raise httpx.HTTPStatusError(
+                    "Rate limited", request=resp.request, response=resp
+                )
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if line.startswith("data: "):
+                    data_str = line[6:].strip()
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data_str)
+                        delta = chunk["choices"][0]["delta"]
+                        if "content" in delta:
+                            yield delta["content"]
+                    except Exception:
+                        pass
 
 
 async def _gemini(
@@ -123,7 +175,7 @@ async def _gemini(
         f"?key={api_key}"
     )
 
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+    async with httpx.AsyncClient(timeout=_TIMEOUT_GEMINI) as client:
         resp = await client.post(url, json=body)
         if resp.status_code == 429:
             raise httpx.HTTPStatusError(
@@ -132,6 +184,95 @@ async def _gemini(
         resp.raise_for_status()
         data = resp.json()
         return data["candidates"][0]["content"]["parts"][0]["text"]
+
+
+async def _gemini_stream(
+    messages: list[dict],
+    json_mode: bool = False,
+) -> AsyncGenerator[str, None]:
+    """Call Google Gemini generateContentStream API."""
+    from app.core.context import user_api_keys
+    
+    ctx_keys = user_api_keys.get()
+    api_key = ctx_keys.get("gemini_api_key") or settings.GEMINI_API_KEY
+    if not api_key:
+        raise AIUnavailable("GEMINI_API_KEY not configured")
+
+    system_text, contents = _gemini_messages(messages)
+
+    body: dict[str, Any] = {"contents": contents}
+    if system_text:
+        body["systemInstruction"] = {
+            "parts": [{"text": system_text}],
+        }
+    generation_config: dict[str, Any] = {"temperature": 0.7}
+    if json_mode:
+        generation_config["responseMimeType"] = "application/json"
+    body["generationConfig"] = generation_config
+
+    url = (
+        f"https://generativelanguage.googleapis.com/v1beta/"
+        f"models/{settings.GEMINI_MODEL}:streamGenerateContent"
+        f"?key={api_key}"
+    )
+
+    async with httpx.AsyncClient(timeout=_TIMEOUT_GEMINI) as client:
+        async with client.stream("POST", url, json=body) as resp:
+            if resp.status_code == 429:
+                raise httpx.HTTPStatusError(
+                    "Rate limited", request=resp.request, response=resp
+                )
+            resp.raise_for_status()
+            buffer = ""
+            async for chunk_bytes in resp.aiter_bytes():
+                buffer += chunk_bytes.decode("utf-8")
+                while True:
+                    buffer = buffer.strip()
+                    if buffer.startswith("["):
+                        buffer = buffer[1:].strip()
+                    if buffer.startswith(","):
+                        buffer = buffer[1:].strip()
+                    
+                    start_idx = buffer.find("{")
+                    if start_idx == -1:
+                        break
+                    
+                    depth = 0
+                    end_idx = -1
+                    in_string = False
+                    escaped = False
+                    for i in range(start_idx, len(buffer)):
+                        char = buffer[i]
+                        if escaped:
+                            escaped = False
+                            continue
+                        if char == "\\":
+                            escaped = True
+                            continue
+                        if char == '"':
+                            in_string = not in_string
+                            continue
+                        if not in_string:
+                            if char == "{":
+                                depth += 1
+                            elif char == "}":
+                                depth -= 1
+                                if depth == 0:
+                                    end_idx = i
+                                    break
+                    
+                    if end_idx != -1:
+                        obj_str = buffer[start_idx:end_idx+1]
+                        buffer = buffer[end_idx+1:].strip()
+                        try:
+                            chunk_data = json.loads(obj_str)
+                            text_val = chunk_data["candidates"][0]["content"]["parts"][0]["text"]
+                            if text_val:
+                                yield text_val
+                        except Exception:
+                            pass
+                    else:
+                        break
 
 
 async def _openrouter(
@@ -154,7 +295,7 @@ async def _openrouter(
     if json_mode:
         body["response_format"] = {"type": "json_object"}
 
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+    async with httpx.AsyncClient(timeout=_TIMEOUT_OPENROUTER) as client:
         resp = await client.post(
             "https://openrouter.ai/api/v1/chat/completions",
             headers={
@@ -174,12 +315,70 @@ async def _openrouter(
         return data["choices"][0]["message"]["content"]
 
 
+async def _openrouter_stream(
+    messages: list[dict],
+    json_mode: bool = False,
+) -> AsyncGenerator[str, None]:
+    """Call OpenRouter's chat completions streaming endpoint."""
+    from app.core.context import user_api_keys
+    
+    ctx_keys = user_api_keys.get()
+    api_key = ctx_keys.get("openrouter_api_key") or settings.OPENROUTER_API_KEY
+    if not api_key:
+        raise AIUnavailable("OPENROUTER_API_KEY not configured")
+
+    body: dict[str, Any] = {
+        "model": settings.OPENROUTER_MODEL,
+        "messages": _openai_messages(messages),
+        "temperature": 0.7,
+        "stream": True,
+    }
+    if json_mode:
+        body["response_format"] = {"type": "json_object"}
+
+    async with httpx.AsyncClient(timeout=_TIMEOUT_OPENROUTER) as client:
+        async with client.stream(
+            "POST",
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://fluent.app",
+                "X-Title": "Fluent",
+            },
+            json=body,
+        ) as resp:
+            if resp.status_code == 429:
+                raise httpx.HTTPStatusError(
+                    "Rate limited", request=resp.request, response=resp
+                )
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if line.startswith("data: "):
+                    data_str = line[6:].strip()
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data_str)
+                        delta = chunk["choices"][0]["delta"]
+                        if "content" in delta:
+                            yield delta["content"]
+                    except Exception:
+                        pass
+
+
 # ── Public API ───────────────────────────────────────────────────────
 
 _PROVIDERS: list[tuple[str, Any]] = [
     ("groq", _groq),
     ("gemini", _gemini),
     ("openrouter", _openrouter),
+]
+
+_PROVIDERS_STREAM: list[tuple[str, Any]] = [
+    ("groq", _groq_stream),
+    ("gemini", _gemini_stream),
+    ("openrouter", _openrouter_stream),
 ]
 
 
@@ -235,6 +434,60 @@ async def ai_complete(
                 break
 
     raise AIUnavailable(f"All AI providers exhausted. Errors: {'; '.join(errors)}")
+
+
+async def ai_stream(
+    messages: list[dict],
+    *,
+    json_mode: bool = False,
+    fast: bool = False,
+) -> AsyncGenerator[str, None]:
+    """
+    Try each AI provider in order for streaming responses.
+    Yields tokens dynamically. If a provider fails, falls back to the next one.
+    """
+    errors: list[str] = []
+
+    for provider_name, provider_fn in _PROVIDERS_STREAM:
+        for attempt in range(1, 3):
+            try:
+                kwargs: dict[str, Any] = {
+                    "messages": messages,
+                    "json_mode": json_mode,
+                }
+                if provider_name == "groq":
+                    kwargs["fast"] = fast
+
+                log.info("Starting AI stream via %s (attempt %d)", provider_name, attempt)
+                async for token in provider_fn(**kwargs):
+                    yield token
+                
+                return
+
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 429 and attempt < 2:
+                    log.warning(
+                        "%s stream rate-limited (attempt %d), retrying in 1.5 s …",
+                        provider_name,
+                        attempt,
+                    )
+                    await asyncio.sleep(1.5)
+                    continue
+                errors.append(f"{provider_name}[{attempt}]: HTTP {exc.response.status_code}")
+                log.warning("Provider %s stream failed: %s", provider_name, exc)
+                break
+
+            except AIUnavailable as exc:
+                errors.append(f"{provider_name}: {exc}")
+                log.info("Skipping %s stream — %s", provider_name, exc)
+                break
+
+            except Exception as exc:
+                errors.append(f"{provider_name}[{attempt}]: {exc}")
+                log.warning("Provider %s stream failed unexpectedly: %s", provider_name, exc)
+                break
+
+    raise AIUnavailable(f"All AI streaming providers exhausted. Errors: {'; '.join(errors)}")
 
 
 async def ai_json(

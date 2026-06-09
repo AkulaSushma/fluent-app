@@ -175,86 +175,152 @@ async def generate_vocab_deck(theme: str, count: int = 8) -> dict:
         return content_library.get_vocab_deck(theme, count)
 
 
-async def evaluate_pronunciation(target: str, transcript: str) -> dict:
+async def evaluate_pronunciation(
+    target: str,
+    transcript: str,
+    user_id: str = None,
+    db = None,
+    audio_bytes: bytes = None
+) -> dict:
     """
-    Compare the user's spoken transcript against the target sentence and
-    return an accuracy score plus feedback.
+    Compare user's spoken transcript against target sentence.
+    Returns WPM, word-by-word alignment score/status, phonemes, and comparative motivation delta.
     """
-    # 1. Check for empty/silent input
-    if not transcript or not transcript.strip():
-        target_words = re.findall(r'\b\w+\b', target.lower())
-        return {
-            "accuracy": 0,
-            "matched_words": [],
-            "problem_words": target_words,
-            "tip": "No speech detected. Please speak clearly into your microphone."
-        }
+    # 1. Try Azure Pronunciation Assessment if enabled
+    from app.services.pronunciation_azure import evaluate_with_azure
+    if audio_bytes:
+        azure_res = await evaluate_with_azure(audio_bytes, target)
+        if azure_res:
+            if db and user_id:
+                try:
+                    from app.db.models import SpeakingAttempt
+                    new_attempt = SpeakingAttempt(
+                        user_id=user_id,
+                        passage_theme="Speaking Practice",
+                        accuracy=azure_res["accuracy"],
+                        wpm=azure_res["fluency_wpm"]
+                    )
+                    db.add(new_attempt)
+                    await db.commit()
+                except Exception:
+                    pass
+            return azure_res
 
-    # 2. Check for exact match (case-insensitive, ignoring punctuation)
-    clean_target = re.sub(r'[^\w\s]', '', target.lower()).strip()
-    clean_transcript = re.sub(r'[^\w\s]', '', transcript.lower()).strip()
+    # 2. Local alignment fallback / cheap path
+    target_words = target.split()
+    transcript_words = transcript.lower().split()
+
+    words_result = []
+    matched_count = 0
+    t_idx = 0
+
+    for idx, tw in enumerate(target_words):
+        tw_clean = "".join(c for c in tw.lower() if c.isalnum())
+        matched = False
+        status = "miss"
+        score = 0
+
+        # Slide window up to 3 words
+        for offset in range(4):
+            if t_idx + offset < len(transcript_words):
+                trans_w_clean = "".join(c for c in transcript_words[t_idx + offset] if c.isalnum())
+                if tw_clean == trans_w_clean or (len(tw_clean) > 3 and (tw_clean in trans_w_clean or trans_w_clean in tw_clean)):
+                    matched = True
+                    t_idx += offset + 1
+                    matched_count += 1
+                    score = 100
+                    status = "good"
+                    break
+
+        if not matched:
+            score = 0
+            status = "miss"
+
+        words_result.append({
+            "i": idx,
+            "text": tw,
+            "score": score,
+            "status": status
+        })
+
+    accuracy = int((matched_count / max(len(target_words), 1)) * 100)
     
-    if clean_target == clean_transcript:
-        target_words = re.findall(r'\b\w+\b', target)
-        return {
-            "accuracy": 100,
-            "matched_words": target_words,
-            "problem_words": [],
-            "tip": "Excellent pronunciation! Perfect match."
-        }
+    # Estimate WPM
+    est_duration = max(2.0, len(audio_bytes) / 32000.0) if audio_bytes else 5.0
+    wpm = int((len(transcript_words) / est_duration) * 60)
+    wpm = max(40, min(wpm, 220))
 
-    # 3. Otherwise, perform AI-based evaluation
-    try:
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "You are a pronunciation coach. Compare the TARGET sentence with "
-                    "the TRANSCRIPT the student actually spoke. "
-                    "Respond ONLY with valid JSON matching this schema:\n"
-                    "{\n"
-                    '  "accuracy": <0-100 integer>,\n'
-                    '  "matched_words": ["<correctly pronounced words>"],\n'
-                    '  "problem_words": ["<mispronounced or missing words>"],\n'
-                    '  "tip": "<one short, actionable pronunciation tip>"\n'
-                    "}\n"
-                    "Be encouraging but honest. A perfect match is 100."
-                ),
-            },
-            {
-                "role": "user",
-                "content": f"TARGET: {target}\nTRANSCRIPT: {transcript}",
-            },
-        ]
-        return await ai_json(messages, fast=True)
-    except Exception:
-        # Fallback local comparison
-        def tokenize(text):
-            return re.findall(r'\b\w+\b', text.lower())
-        
-        target_words = tokenize(target)
-        transcript_words = set(tokenize(transcript))
-        
-        if not target_words:
-            return {"accuracy": 100, "matched_words": [], "problem_words": [], "tip": "Perfect pronunciation!"}
+    # Detect tricky phoneme problems
+    problem_phonemes = []
+    problems = [w["text"].lower() for w in words_result if w["status"] in ("miss", "warn")]
+    phoneme_map = {
+        "θ": {"patterns": ["th", "think", "thought", "theme"], "tip": "Place the tip of your tongue slightly between your upper and lower teeth."},
+        "r": {"patterns": ["r", "read", "run", "right"], "tip": "Curl your tongue backward without letting the tip touch the roof of your mouth."},
+        "v": {"patterns": ["v", "very", "voice", "have"], "tip": "Let your top teeth gently touch your bottom lip while making a voiced sound."},
+        "w": {"patterns": ["w", "with", "would", "want"], "tip": "Round your lips into a tight circle like a whistle, then release."}
+    }
+    
+    detected_phonemes = set()
+    for w in problems:
+        for ph, info in phoneme_map.items():
+            if ph not in detected_phonemes and any(pat in w for pat in info["patterns"]):
+                detected_phonemes.add(ph)
+                problem_phonemes.append({
+                    "sound": ph,
+                    "examples": [info["patterns"][1]] if len(info["patterns"]) > 1 else [w],
+                    "tip": info["tip"]
+                })
+
+    # Comparative Motivation Delta
+    motivation = "Your reading is steady and clear. Keep practicing to build confidence!"
+    if db and user_id:
+        try:
+            from sqlalchemy import select
+            from app.db.models import SpeakingAttempt
             
-        matched = [w for w in target_words if w in transcript_words]
-        problems = [w for w in target_words if w not in transcript_words]
-        
-        accuracy = int((len(matched) / len(target_words)) * 100)
-        
-        tip = "Try to speak a bit clearer and check the pronunciation of problem words."
-        if accuracy >= 90:
-            tip = "Excellent pronunciation! Keep it up."
-        elif accuracy >= 70:
-            tip = "Good effort! Focus on matching all target words."
-            
-        return {
-            "accuracy": accuracy,
-            "matched_words": matched,
-            "problem_words": problems,
-            "tip": tip
-        }
+            stmt = (
+                select(SpeakingAttempt)
+                .where(SpeakingAttempt.user_id == user_id)
+                .order_by(SpeakingAttempt.created_at.desc())
+                .limit(1)
+            )
+            res = await db.execute(stmt)
+            last_attempt = res.scalar_one_or_none()
+
+            if last_attempt:
+                acc_delta = accuracy - last_attempt.accuracy
+                wpm_delta = wpm - last_attempt.wpm
+                
+                if acc_delta > 0 and wpm_delta > 0:
+                    motivation = f"Awesome! You are {acc_delta}% more accurate and read {wpm_delta} WPM faster than your last reading."
+                elif acc_delta > 0:
+                    motivation = f"Great progress! Your pronunciation accuracy improved by {acc_delta}% since your last attempt."
+                elif wpm_delta > 0:
+                    motivation = f"Nice! You spoke {wpm_delta} WPM faster than your last reading."
+                else:
+                    motivation = "You matched your previous performance. Keep speaking to build fluid muscle memory!"
+
+            # Save the new attempt
+            new_attempt = SpeakingAttempt(
+                user_id=user_id,
+                passage_theme="Speaking Practice",
+                accuracy=accuracy,
+                wpm=wpm
+            )
+            db.add(new_attempt)
+            await db.commit()
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("Failed to save or compare SpeakingAttempt: %s", e)
+
+    return {
+        "accuracy": accuracy,
+        "fluency_wpm": wpm,
+        "words": words_result,
+        "problem_phonemes": problem_phonemes,
+        "motivation": motivation
+    }
+
 
 
 

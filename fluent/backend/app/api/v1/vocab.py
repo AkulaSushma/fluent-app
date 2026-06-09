@@ -14,6 +14,7 @@ from app.api.deps import get_current_user, get_db
 from app.db.models import User, VocabProgress
 from app.schemas.learning import VocabDeckResponse, VocabMasterRequest, VocabThemesResponse
 from app.services.content_service import generate_vocab_deck
+from app.services.cache import cache_get, cache_set, make_key
 
 router = APIRouter(prefix="/vocab", tags=["vocabulary"])
 
@@ -110,7 +111,11 @@ async def get_deck(
             })
         return {"cards": cards}
 
-    data = await generate_vocab_deck(theme, count)
+    key = make_key("vocab_deck", theme, count)
+    data = await cache_get(key)
+    if not data:
+        data = await generate_vocab_deck(theme, count)
+        await cache_set(key, data, ttl=86400) # 1 day
     return VocabDeckResponse(**data)
 
 

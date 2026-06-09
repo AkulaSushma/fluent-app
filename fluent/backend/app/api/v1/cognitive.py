@@ -13,6 +13,7 @@ from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_current_user, get_db
 from app.core.srs import sm2
+from app.services.cache import cache_get, cache_set, make_key
 from app.db.models import (
     User,
     EtymologyPart,
@@ -57,10 +58,31 @@ async def get_library(
     _current_user: User = Depends(get_current_user),
 ):
     """Get all library books ordered by sort_order."""
+    key = make_key("cognitive_library")
+    hit = await cache_get(key)
+    if hit is not None:
+        return hit
     result = await db.execute(
         select(LibraryBook).order_by(LibraryBook.sort_order.asc())
     )
-    return result.scalars().all()
+    books = result.scalars().all()
+    books_data = [
+        {
+            "id": b.id,
+            "title": b.title,
+            "author": b.author,
+            "track": b.track.value,
+            "cover_url": b.cover_url,
+            "content_url": b.content_url,
+            "is_public_domain": b.is_public_domain,
+            "accent_color": b.accent_color,
+            "sort_order": b.sort_order,
+            "description": b.description,
+            "chapter_count": b.chapter_count
+        } for b in books
+    ]
+    await cache_set(key, books_data, ttl=604800)  # 7 days
+    return books
 
 
 GUTENBERG_CACHE: dict[str, str] = {}
@@ -295,6 +317,10 @@ async def get_word_families(
     _current_user: User = Depends(get_current_user),
 ):
     """Get all word families with nested vocabulary nodes."""
+    key = make_key("cognitive_word_families")
+    hit = await cache_get(key)
+    if hit is not None:
+        return hit
     result = await db.execute(
         select(WordFamily)
         .options(
@@ -339,6 +365,9 @@ async def get_word_families(
                 words=words_out
             )
         )
+    # Cache the word families list
+    serialized = [item.model_dump(mode='json') for item in out_list]
+    await cache_set(key, serialized, ttl=604800)  # 7 days
     return out_list
 
 
@@ -437,17 +466,37 @@ async def review_srs_item(
             detail="SRS item not found"
         )
         
-    # SM-2 math: quality 1 (forgot), 3 (hard), 4 (good), 5 (easy)
-    interval_days, repetitions, ease_factor = sm2(
-        body.quality,
-        item.repetitions,
-        item.ease_factor,
-        item.interval_days
+    from app.services.fsrs import calculate_next_review
+
+    # Map quality (0-5) to FSRS grade (0-3)
+    fsrs_grade = 0
+    if body.quality == 3:
+        fsrs_grade = 1
+    elif body.quality == 4:
+        fsrs_grade = 2
+    elif body.quality >= 5:
+        fsrs_grade = 3
+
+    # Load existing difficulty & stability
+    stability = item.fsrs_stability if item.fsrs_stability is not None else 2.5
+    difficulty = item.fsrs_difficulty if item.fsrs_difficulty is not None else 5.0
+
+    new_stability, new_difficulty, due_at = calculate_next_review(
+        stability=stability,
+        difficulty=difficulty,
+        grade=fsrs_grade,
+        last_reviewed=item.last_reviewed_at,
+        current_time=datetime.now(timezone.utc)
     )
-    
+
+    interval_days = max(1, round(new_stability))
+
+    item.fsrs_state = 2 if body.quality >= 3 else 3
+    item.fsrs_stability = new_stability
+    item.fsrs_difficulty = new_difficulty
     item.interval_days = interval_days
-    item.repetitions = repetitions
-    item.ease_factor = ease_factor
+    item.repetitions = item.repetitions + 1 if body.quality >= 3 else 0
+    item.ease_factor = new_stability / max(1, item.repetitions)
     
     # Map quality to original stage counter (0 to 4)
     if body.quality >= 3:
@@ -805,8 +854,24 @@ async def get_themes(
     _current_user: User = Depends(get_current_user),
 ):
     """Get all themes."""
+    key = make_key("cognitive_themes")
+    hit = await cache_get(key)
+    if hit is not None:
+        return hit
     result = await db.execute(select(Theme).order_by(Theme.name.asc()))
-    return result.scalars().all()
+    themes = result.scalars().all()
+    themes_data = [
+        {
+            "id": t.id,
+            "name": t.name,
+            "slug": t.slug,
+            "description": t.description,
+            "icon": t.icon,
+            "accent_color": t.accent_color
+        } for t in themes
+    ]
+    await cache_set(key, themes_data, ttl=604800)  # 7 days
+    return themes
 
 
 @router.get("/themes/{theme_id}/families", response_model=list[WordFamilyOut])

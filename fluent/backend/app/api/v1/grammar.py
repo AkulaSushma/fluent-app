@@ -25,6 +25,7 @@ from app.schemas.learning import (
     GrammarQuizResult,
 )
 from app.services.content_service import generate_grammar_lesson
+from app.services.cache import cache_get, cache_set, make_key
 
 router = APIRouter(prefix="/grammar", tags=["grammar"])
 
@@ -210,8 +211,16 @@ async def create_lesson(
                 grammar_item = res.scalar_one_or_none()
                 break
 
-    # Load the base grammar lesson first
-    data = await generate_grammar_lesson(body.topic, body.level)
+    # Load the base grammar lesson first (with Redis caching)
+    key = make_key("grammar_lesson", body.topic, body.level)
+    data = await cache_get(key)
+    if not data:
+        data = await generate_grammar_lesson(body.topic, body.level)
+        await cache_set(key, data, ttl=604800)  # 7 days
+    else:
+        # Create a deep copy to prevent mutation of cached data when overriding quiz below
+        import copy
+        data = copy.deepcopy(data)
 
     if grammar_item:
         payload = grammar_item.payload

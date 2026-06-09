@@ -13,6 +13,7 @@ from app.api.deps import get_current_user, get_db
 from app.db.models import User
 from app.schemas.learning import ArticleResponse
 from app.services.content_service import generate_article
+from app.services.cache import cache_get, cache_set, make_key
 
 router = APIRouter(prefix="/articles", tags=["articles"])
 
@@ -129,10 +130,18 @@ async def random_article(
 
     if day <= 0:
         topic = random.choice(_TOPICS)
-        data = await generate_article(topic, level, day=None)
+        key = make_key("random_article", topic, level, "none")
+        data = await cache_get(key)
+        if not data:
+            data = await generate_article(topic, level, day=None)
+            await cache_set(key, data, ttl=86400)
     else:
         topic_index = (day - 1) % len(_TOPICS)
         topic = _TOPICS[topic_index]
-        data = await generate_article(topic, level, day=day)
+        key = make_key("random_article", topic, level, str(day))
+        data = await cache_get(key)
+        if not data:
+            data = await generate_article(topic, level, day=day)
+            await cache_set(key, data, ttl=86400)
         
     return ArticleResponse(**data)

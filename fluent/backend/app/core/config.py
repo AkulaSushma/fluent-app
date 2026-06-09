@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     GEMINI_MODEL: str = "gemini-2.5-flash"
     OPENROUTER_MODEL: str = "meta-llama/llama-3.3-70b-instruct"
 
+    # Sentry Observability
+    SENTRY_DSN: str = ""
+
 
 import socket
 

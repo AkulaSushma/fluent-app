@@ -163,11 +163,28 @@ export interface GrammarQuizResult {
   new_mastery: number;
 }
 
+export interface WordScore {
+  i: number;
+  text: string;
+  score: number;
+  status: 'good' | 'miss' | 'warn';
+}
+
+export interface ProblemPhoneme {
+  sound: string;
+  examples: string[];
+  tip: string;
+}
+
 export interface PronunciationResult {
   accuracy: number;
   matched_words: string[];
   problem_words: string[];
   tip: string;
+  fluency_wpm?: number;
+  words?: WordScore[];
+  problem_phonemes?: ProblemPhoneme[];
+  motivation?: string;
 }
 
 export interface ArticleResponse {

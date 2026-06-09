@@ -141,11 +141,28 @@ class GrammarQuizResult(BaseModel):
 # ── Pronunciation ────────────────────────────────────────────────────
 
 
+class WordScore(BaseModel):
+    i: int
+    text: str
+    score: int
+    status: str
+
+
+class ProblemPhoneme(BaseModel):
+    sound: str
+    examples: list[str]
+    tip: str
+
+
 class PronunciationResult(BaseModel):
     accuracy: int = Field(ge=0, le=100)
     matched_words: list[str]
     problem_words: list[str]
     tip: str
+    fluency_wpm: int | None = None
+    words: list[WordScore] | None = None
+    problem_phonemes: list[ProblemPhoneme] | None = None
+    motivation: str | None = None
 
 
 # ── Articles / Teleprompter ──────────────────────────────────────────

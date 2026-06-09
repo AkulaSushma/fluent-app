@@ -14,12 +14,14 @@ import Animated, {
   withRepeat,
   withTiming,
   withDelay,
+  withSequence,
   Easing,
   useAnimatedRef,
   useDerivedValue,
   scrollTo,
   cancelAnimation,
   runOnJS,
+  SharedValue,
 } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAudioRecorder, RecordingPresets, requestRecordingPermissionsAsync } from 'expo-audio';
@@ -34,9 +36,11 @@ import PressableScale from '@/components/PressableScale';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { palette, radius, space, shadow } from '@/theme/tokens';
 import { font } from '@/theme/typography';
+import { speakSweetly, stopSpeaking } from '@/utils/speech';
 import { api } from '@/api/client';
 import type { ArticleResponse, PronunciationResult } from '@/api/client';
 import { useStore } from '@/store/useStore';
+import ResultCard from '@/components/ResultCard';
 
 /* ------------------------------------------------------------------ */
 /*  Equalizer Bar                                                      */
@@ -80,6 +84,111 @@ function EqBar({ index, isRecording }: { index: number; isRecording: boolean }) 
 }
 
 /* ------------------------------------------------------------------ */
+/*  Word Token (Karaoke Highlighting)                                 */
+/* ------------------------------------------------------------------ */
+function WordToken({
+  word,
+  idx,
+  activeWordIndex,
+  result,
+}: {
+  word: string;
+  idx: number;
+  activeWordIndex: SharedValue<number>;
+  result: PronunciationResult | null;
+}) {
+  const cleanWord = word.toLowerCase().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, '');
+  let isProblem = result?.problem_words?.some((w) => w.toLowerCase() === cleanWord);
+  let isMatched = result?.matched_words?.some((w) => w.toLowerCase() === cleanWord);
+
+  const animatedStyle = useAnimatedStyle(() => {
+    if (result) {
+      if (isProblem) {
+        return {
+          color: palette.amber,
+          fontWeight: '700' as const,
+        };
+      } else if (isMatched) {
+        return {
+          color: palette.accent,
+          fontWeight: '500' as const,
+        };
+      }
+      return {
+        color: palette.ink,
+      };
+    }
+
+    const isActive = idx === activeWordIndex.value;
+    const isPast = idx < activeWordIndex.value;
+
+    if (isActive) {
+      return {
+        color: palette.accent,
+        transform: [{ scale: withTiming(1.1, { duration: 150 }) }],
+      };
+    } else if (isPast) {
+      return {
+        color: palette.ink,
+        transform: [{ scale: withTiming(1.0, { duration: 150 }) }],
+      };
+    } else {
+      return {
+        color: palette.ink3,
+        transform: [{ scale: 1.0 }],
+      };
+    }
+  });
+
+  return (
+    <Animated.Text style={[styles.wordToken, animatedStyle]}>
+      {word}{' '}
+    </Animated.Text>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Skeleton Loader                                                   */
+/* ------------------------------------------------------------------ */
+function SkeletonLoader() {
+  const opacity = useSharedValue(0.4);
+
+  useEffect(() => {
+    opacity.value = withRepeat(
+      withSequence(
+        withTiming(1.0, { duration: 800 }),
+        withTiming(0.4, { duration: 800 })
+      ),
+      -1,
+      true
+    );
+  }, [opacity]);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    opacity: opacity.value,
+  }));
+
+  return (
+    <View style={styles.skeletonContainer}>
+      <Animated.View style={[styles.skeletonTitle, animatedStyle]} />
+      <Animated.View style={[styles.skeletonCard, animatedStyle]}>
+        <View style={styles.skeletonTextLineShort} />
+        <View style={styles.skeletonWindow} />
+        <View style={styles.skeletonPaceRow} />
+      </Animated.View>
+      <Animated.View style={[styles.skeletonCard, animatedStyle]}>
+        <View style={styles.skeletonTextLineMedium} />
+        <View style={styles.skeletonWaveform} />
+      </Animated.View>
+      <Animated.View style={[styles.skeletonButtonRow, animatedStyle]}>
+        <View style={styles.skeletonButton} />
+        <View style={styles.skeletonButton} />
+      </Animated.View>
+    </View>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /*  Main                                                               */
 /* ------------------------------------------------------------------ */
 export default function TeleprompterScreen() {
@@ -94,6 +203,8 @@ export default function TeleprompterScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [isEvaluating, setIsEvaluating] = useState(false);
   const [result, setResult] = useState<PronunciationResult | null>(null);
+  const [isShadowing, setIsShadowing] = useState(false);
+  const [shadowingSpeed, setShadowingSpeed] = useState(1.0);
 
   /* Audio state */
   const [isRecording, setIsRecording] = useState(false);
@@ -104,6 +215,24 @@ export default function TeleprompterScreen() {
   const scrollYShared = useSharedValue(0);
   const [isScrolling, setIsScrolling] = useState(false);
   const [wpm, setWpm] = useState(160); // Default speed in words-per-minute
+
+  // Active word index calculation based on scroll offset
+  const activeWordIndex = useDerivedValue(() => {
+    const maxScrollY = Math.max(1, contentHeight - scrollViewHeight);
+    const progress = Math.min(1.0, Math.max(0.0, scrollYShared.value / maxScrollY));
+    const wordCount = article?.content ? article.content.split(/\s+/).length : 120;
+    return Math.floor(progress * wordCount);
+  });
+
+  // Haptic feedback loop for each word completed
+  const prevActiveWordIndex = useSharedValue(-1);
+  useDerivedValue(() => {
+    const currentIdx = activeWordIndex.value;
+    if (isScrolling && currentIdx !== prevActiveWordIndex.value && currentIdx >= 0) {
+      prevActiveWordIndex.value = currentIdx;
+      runOnJS(Haptics.selectionAsync)();
+    }
+  });
 
   // Height state for boundary checking
   const [contentHeight, setContentHeight] = useState(0);
@@ -174,10 +303,17 @@ export default function TeleprompterScreen() {
     setIsScrolling(false);
     cancelAnimation(scrollYShared);
     scrollYShared.value = 0;
+    stopSpeaking();
   };
 
   const handlePlayPause = () => {
-    setIsScrolling(!isScrolling);
+    const nextVal = !isScrolling;
+    setIsScrolling(nextVal);
+    if (!nextVal) {
+      stopSpeaking();
+    } else if (isShadowing && article && isRecording) {
+      speakSweetly(article.content, shadowingSpeed);
+    }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
@@ -220,6 +356,9 @@ export default function TeleprompterScreen() {
         setIsRecording((currentRec) => {
           if (currentRec) {
             setIsScrolling(true);
+            if (isShadowing && article) {
+              speakSweetly(article.content, shadowingSpeed);
+            }
           }
           return currentRec;
         });
@@ -233,6 +372,7 @@ export default function TeleprompterScreen() {
   async function stopRecording() {
     setIsRecording(false);
     setIsScrolling(false); // Stop teleprompter scrolling
+    stopSpeaking(); // Stop shadowing audio overlay
     showToast('⏳', 'Evaluating speech accuracy...');
     setIsEvaluating(true);
 
@@ -274,9 +414,9 @@ export default function TeleprompterScreen() {
 
   if (isLoading || !article) {
     return (
-      <View style={[styles.screen, { paddingTop: insets.top, justifyContent: 'center', alignItems: 'center' }]}>
+      <View style={[styles.screen, { paddingTop: insets.top }]}>
         <Header title={typeParam === 'reading' ? 'Reading Practice' : 'Pronunciation'} />
-        <ActivityIndicator size="large" color={palette.accent} />
+        <SkeletonLoader />
       </View>
     );
   }
@@ -286,28 +426,15 @@ export default function TeleprompterScreen() {
     const text = article.content;
     const words = text.split(' ');
 
-    return words.map((word, idx) => {
-      const cleanWord = word.toLowerCase().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, '');
-      let isProblem = result?.problem_words?.some((w) => w.toLowerCase() === cleanWord);
-      let isMatched = result?.matched_words?.some((w) => w.toLowerCase() === cleanWord);
-
-      let textStyle: any = styles.segNext;
-      if (result) {
-        if (isProblem) {
-          textStyle = styles.segProblem;
-        } else if (isMatched) {
-          textStyle = styles.segOk;
-        }
-      } else if (isRecording) {
-        textStyle = styles.segNext;
-      }
-
-      return (
-        <Text key={idx} style={textStyle}>
-          {word}{' '}
-        </Text>
-      );
-    });
+    return words.map((word, idx) => (
+      <WordToken
+        key={idx}
+        word={word}
+        idx={idx}
+        activeWordIndex={activeWordIndex}
+        result={result}
+      />
+    ));
   };
 
   const handleRetry = () => {
@@ -417,6 +544,69 @@ export default function TeleprompterScreen() {
               </PressableScale>
             </View>
           </View>
+
+          {/* Shadowing Mode Row */}
+          <View style={styles.shadowingRow}>
+            <View style={styles.shadowingLabelCol}>
+              <Text style={styles.speedLabel}>Shadowing Mode</Text>
+              <Text style={styles.shadowingSubLabel}>Play tutor audio overlay during practice</Text>
+            </View>
+            <View style={styles.wpmControls}>
+              <PressableScale
+                onPress={() => {
+                  setIsShadowing(!isShadowing);
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                }}
+                style={[
+                  styles.shadowToggleBtn,
+                  isShadowing ? styles.shadowToggleBtnActive : null,
+                ] as any}
+              >
+                <Text
+                  style={[
+                    styles.shadowToggleBtnText,
+                    isShadowing ? styles.shadowToggleBtnTextActive : null,
+                  ]}
+                >
+                  {isShadowing ? 'ACTIVE' : 'OFF'}
+                </Text>
+              </PressableScale>
+            </View>
+          </View>
+
+          {/* Shadowing Speed Controls (shown only when shadowing is active) */}
+          {isShadowing && (
+            <Animated.View entering={FadeInDown.duration(200)} style={styles.shadowSpeedRow}>
+              <Text style={styles.speedLabel}>Tutor Speed</Text>
+              <View style={styles.speedPills}>
+                {[0.75, 1.0, 1.25].map((speed) => (
+                  <PressableScale
+                    key={speed}
+                    onPress={() => {
+                      setShadowingSpeed(speed);
+                      if (isRecording) {
+                        speakSweetly(article.content, speed);
+                      }
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    }}
+                    style={[
+                      styles.speedPill,
+                      shadowingSpeed === speed ? styles.speedPillActive : null,
+                    ] as any}
+                  >
+                    <Text
+                      style={[
+                        styles.speedPillText,
+                        shadowingSpeed === speed ? styles.speedPillTextActive : null,
+                      ]}
+                    >
+                      {speed}x
+                    </Text>
+                  </PressableScale>
+                ))}
+              </View>
+            </Animated.View>
+          )}
         </Card>
 
         {/* Pronunciation Focus Card */}
@@ -433,71 +623,70 @@ export default function TeleprompterScreen() {
         )}
 
         {/* Equalizer */}
-        <Card index={2}>
-          <Text style={styles.cardTitle}>Live waveform</Text>
-          <View style={styles.eqContainer}>
-            {Array.from({ length: 24 }).map((_, i) => (
-              <EqBar key={i} index={i} isRecording={isRecording} />
-            ))}
-          </View>
-        </Card>
+        {!result && (
+          <Card index={2}>
+            <Text style={styles.cardTitle}>Live waveform</Text>
+            <View style={styles.eqContainer}>
+              {Array.from({ length: 24 }).map((_, i) => (
+                <EqBar key={i} index={i} isRecording={isRecording} />
+              ))}
+            </View>
+          </Card>
+        )}
 
         {/* Tip */}
-        {(result || isRecording) && (
+        {!result && isRecording && (
           <Animated.View
             entering={FadeInDown.delay(200).springify().damping(18)}
             style={styles.tipRow}
           >
             <Text style={styles.tipEmoji}>💡</Text>
             <Text style={styles.tipText}>
-              {result?.tip || 'Speak clearly into your microphone at a steady pace.'}
+              Speak clearly into your microphone at a steady pace.
             </Text>
           </Animated.View>
         )}
 
-        {/* Accuracy card */}
+        {/* Result Card */}
         {result && (
-          <Card index={4}>
-            <View style={styles.accuracyRow}>
-              <ProgressRing progress={result.accuracy / 100} size={82} strokeWidth={7}>
-                <Text style={styles.accuracyPct}>{result.accuracy}%</Text>
-              </ProgressRing>
-              <View style={styles.accuracyText}>
-                <Text style={styles.accuracyTitle}>
-                  {result.accuracy >= 90 ? 'Stellar Job!' : 'Good Effort!'}
-                </Text>
-                <Text style={styles.accuracySub}>
-                  Your pronunciation accuracy is {result.accuracy}%.
-                  {result.problem_words.length > 0 && ` Practice pronouncing the words: ${result.problem_words.join(', ')}`}
-                </Text>
-              </View>
-            </View>
-          </Card>
+          <Animated.View entering={FadeInDown.springify()}>
+            <ResultCard
+              result={result}
+              targetWpm={wpm}
+              onRetry={handleRetry}
+              onNewText={() => {
+                resetScroll();
+                fetchArticle(true);
+              }}
+            />
+          </Animated.View>
         )}
 
-        {/* Buttons */}
-        <Animated.View
-          entering={FadeInDown.delay(320).springify().damping(18)}
-          style={styles.btnRow}
-        >
-          <Button
-            label="🔄  New Text"
-            variant="ghost"
-            style={styles.btnHalf}
-            onPress={() => {
-              resetScroll();
-              fetchArticle(true);
-            }}
-            disabled={isRecording || isEvaluating}
-          />
-          <Button
-            label={isRecording ? '⏹️  Stop' : '🎙️  Record'}
-            variant={isRecording ? 'light' : 'accent'}
-            style={styles.btnHalf}
-            onPress={handleRecordPress}
-            disabled={isEvaluating}
-          />
-        </Animated.View>
+        {/* Recording Buttons */}
+        {!result && (
+          <Animated.View
+            entering={FadeInDown.delay(320).springify().damping(18)}
+            style={styles.btnRow}
+          >
+            <Button
+              label="🔄  New Text"
+              variant="ghost"
+              style={styles.btnHalf}
+              onPress={() => {
+                resetScroll();
+                fetchArticle(true);
+              }}
+              disabled={isRecording || isEvaluating}
+            />
+            <Button
+              label={isRecording ? '⏹️  Stop' : '🎙️  Record'}
+              variant={isRecording ? 'light' : 'accent'}
+              style={styles.btnHalf}
+              onPress={handleRecordPress}
+              disabled={isEvaluating}
+            />
+          </Animated.View>
+        )}
 
         {isEvaluating && (
           <ActivityIndicator size="small" color={palette.accent} style={{ marginTop: space.md }} />
@@ -574,6 +763,11 @@ const styles = StyleSheet.create({
     fontSize: 21,
     lineHeight: 34,
     textAlign: 'center',
+  },
+  wordToken: {
+    fontFamily: font.sansReg,
+    fontSize: 21,
+    lineHeight: 34,
   },
   segOk: {
     color: palette.accent,
@@ -768,5 +962,142 @@ const styles = StyleSheet.create({
   },
   backSpacer: {
     width: 42,
+  },
+  shadowingRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: space.md,
+    borderTopWidth: 1,
+    borderTopColor: palette.line2,
+    paddingTop: space.md,
+  },
+  shadowingLabelCol: {
+    flex: 1,
+    paddingRight: space.md,
+  },
+  shadowingSubLabel: {
+    fontFamily: font.sansReg,
+    fontSize: 11,
+    color: palette.ink3,
+    marginTop: 2,
+  },
+  shadowToggleBtn: {
+    paddingHorizontal: space.md,
+    paddingVertical: 6,
+    borderRadius: radius.md,
+    backgroundColor: palette.card,
+    borderWidth: 1,
+    borderColor: palette.line,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  shadowToggleBtnActive: {
+    backgroundColor: palette.accentSoft,
+    borderColor: palette.accent,
+  },
+  shadowToggleBtnText: {
+    fontFamily: font.sansBold,
+    fontSize: 11,
+    color: palette.ink2,
+  },
+  shadowToggleBtnTextActive: {
+    color: palette.accent,
+  },
+  shadowSpeedRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: space.sm,
+    backgroundColor: palette.paper,
+    padding: space.sm,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: palette.line2,
+  },
+  speedPills: {
+    flexDirection: 'row',
+    gap: space.xs,
+  },
+  speedPill: {
+    paddingHorizontal: space.sm + 2,
+    paddingVertical: 4,
+    borderRadius: radius.sm,
+    backgroundColor: palette.card,
+    borderWidth: 1,
+    borderColor: palette.line,
+  },
+  speedPillActive: {
+    backgroundColor: palette.accent,
+    borderColor: palette.accent,
+  },
+  speedPillText: {
+    fontFamily: font.sansMed,
+    fontSize: 11,
+    color: palette.ink2,
+  },
+  speedPillTextActive: {
+    color: '#FFFFFF',
+  },
+  skeletonContainer: {
+    flex: 1,
+    paddingHorizontal: space.xl,
+    gap: space.lg,
+    paddingTop: space.md,
+  },
+  skeletonTitle: {
+    height: 24,
+    width: '60%',
+    backgroundColor: palette.line,
+    borderRadius: radius.sm,
+    marginBottom: space.sm,
+  },
+  skeletonCard: {
+    backgroundColor: palette.card,
+    borderRadius: radius.lg,
+    padding: space.lg,
+    gap: space.md,
+    borderWidth: 1,
+    borderColor: palette.line2,
+    ...shadow.card,
+  },
+  skeletonTextLineShort: {
+    height: 16,
+    width: '40%',
+    backgroundColor: palette.line2,
+    borderRadius: radius.sm,
+  },
+  skeletonTextLineMedium: {
+    height: 16,
+    width: '55%',
+    backgroundColor: palette.line2,
+    borderRadius: radius.sm,
+  },
+  skeletonWindow: {
+    height: 200,
+    backgroundColor: palette.line2,
+    borderRadius: radius.md,
+  },
+  skeletonPaceRow: {
+    height: 40,
+    backgroundColor: palette.line2,
+    borderRadius: radius.sm,
+    marginTop: space.sm,
+  },
+  skeletonWaveform: {
+    height: 56,
+    backgroundColor: palette.line2,
+    borderRadius: radius.sm,
+  },
+  skeletonButtonRow: {
+    flexDirection: 'row',
+    gap: space.md,
+    marginTop: space.sm,
+  },
+  skeletonButton: {
+    flex: 1,
+    height: 48,
+    backgroundColor: palette.line,
+    borderRadius: radius.pill,
   },
 });

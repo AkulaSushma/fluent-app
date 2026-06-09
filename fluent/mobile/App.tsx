@@ -1,5 +1,22 @@
 import React from 'react';
 import { View, StyleSheet, ActivityIndicator, LogBox } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
+import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
+import { queryClient } from './src/api/queryClient';
+import * as Sentry from '@sentry/react-native';
+
+if (process.env.EXPO_PUBLIC_SENTRY_DSN) {
+  Sentry.init({
+    dsn: process.env.EXPO_PUBLIC_SENTRY_DSN,
+    tracesSampleRate: 0.05,
+  });
+}
+
+const persister = createAsyncStoragePersister({
+  storage: AsyncStorage,
+  key: 'FLUENT_OFFLINE_CACHE',
+});
 
 LogBox.ignoreLogs([
   'expo-notifications: Android Push notifications',
@@ -29,7 +46,7 @@ import Toast from './src/components/Toast';
 import { useStore } from './src/store/useStore';
 import { requestNotificationPermissions } from './src/utils/notifications';
 
-export default function App() {
+function App() {
   const [fontsLoaded] = useFonts({
     Fraunces_400Regular,
     Fraunces_500Medium,
@@ -67,13 +84,15 @@ export default function App() {
 
   return (
     <GestureHandlerRootView style={styles.container}>
-      <SafeAreaProvider>
-        <NavigationContainer>
-          <StatusBar style="dark" />
-          <RootNavigator />
-          <Toast />
-        </NavigationContainer>
-      </SafeAreaProvider>
+      <PersistQueryClientProvider client={queryClient} persistOptions={{ persister }}>
+        <SafeAreaProvider>
+          <NavigationContainer>
+            <StatusBar style="dark" />
+            <RootNavigator />
+            <Toast />
+          </NavigationContainer>
+        </SafeAreaProvider>
+      </PersistQueryClientProvider>
     </GestureHandlerRootView>
   );
 }
@@ -89,3 +108,5 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 });
+
+export default process.env.EXPO_PUBLIC_SENTRY_DSN ? Sentry.wrap(App) : App;

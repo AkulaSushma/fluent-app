@@ -2,6 +2,8 @@ import { create } from 'zustand';
 import * as SecureStore from 'expo-secure-store';
 import { api, setAuthToken, onUnauthorized } from '../api/client';
 import { scheduleDailyReminders } from '../utils/notifications';
+import { queryClient } from '../api/queryClient';
+import { prefetchNextDeck } from '../api/queries';
 import type {
   FlashCard,
   CurriculumTaskOut,
@@ -388,11 +390,18 @@ export const useStore = create<StoreState>((set, get) => ({
   fetchProgress: async () => {
     set({ isLoadingData: true });
     try {
-      const [stats, user] = await Promise.all([
-        api.getProgress(),
-        api.getMe().catch(() => null),
-      ]);
-      const trendsRes = await api.getTrends().catch(() => null);
+      const stats = await queryClient.fetchQuery({
+        queryKey: ['progress_me'],
+        queryFn: () => api.getProgress(),
+      });
+      const user = await queryClient.fetchQuery({
+        queryKey: ['user_me'],
+        queryFn: () => api.getMe(),
+      }).catch(() => null);
+      const trendsRes = await queryClient.fetchQuery({
+        queryKey: ['progress_trends'],
+        queryFn: () => api.getTrends(),
+      }).catch(() => null);
 
       const mappedLevel =
         stats.level === 'intermediate' ? 7 : stats.level === 'advanced' ? 9 : 5;
@@ -416,7 +425,7 @@ export const useStore = create<StoreState>((set, get) => ({
         words: stats.total_words,
         minutesWeek: stats.weekly_minutes,
         goalProgress: stats.goal_progress / 100,
-        dailyMinutes: stats.daily_breakdown.map((d) => d.minutes),
+        dailyMinutes: stats.daily_breakdown.map((d: any) => d.minutes),
         level: mappedLevel,
         srsDueCount: stats.srs_due_count ?? get().srsDueCount,
         curriculumDay: stats.curriculum_day ?? get().curriculumDay,
@@ -442,7 +451,10 @@ export const useStore = create<StoreState>((set, get) => ({
 
   fetchVocabDeck: async (theme = 'corporate', count = 8) => {
     try {
-      const res = await api.getVocabDeck(theme, count);
+      const res = await queryClient.fetchQuery({
+        queryKey: ['vocab_deck', theme, count],
+        queryFn: () => api.getVocabDeck(theme, count),
+      });
       const cards = res.cards.map((c, idx) => ({
         ...c,
         id: (idx + 1).toString(),
@@ -458,6 +470,9 @@ export const useStore = create<StoreState>((set, get) => ({
         currentCardIndex: 0,
         knownIds: new Set<string>(),
       });
+      // Prefetch the next vocab deck
+      const nextTheme = theme === 'corporate' ? 'technology' : 'corporate';
+      prefetchNextDeck(queryClient, nextTheme, count);
     } catch (err) {
       console.error('Failed to fetch vocab deck:', err);
     }
@@ -496,7 +511,10 @@ export const useStore = create<StoreState>((set, get) => ({
   /* intelligence / curriculum / gamification / settings actions */
   fetchCurriculumToday: async () => {
     try {
-      const today = await api.getCurriculumToday();
+      const today = await queryClient.fetchQuery({
+        queryKey: ['curriculum_today'],
+        queryFn: () => api.getCurriculumToday(),
+      });
       set({
         curriculumDay: today.day_number,
         curriculumPhase: today.phase,

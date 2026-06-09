@@ -8,7 +8,7 @@ let ttsPlayer: any = null;
  * Google Translate's neural TTS API through expo-audio.
  * This ensures voice output works on all devices without relying on native TTS engine packages.
  */
-export const speakSweetly = (text: string) => {
+export const speakSweetly = (text: string, rate: number = 1.0) => {
   if (!text) return;
 
   // Clean text of emojis and special characters for clear speech
@@ -30,9 +30,24 @@ export const speakSweetly = (text: string) => {
       ttsPlayer.replace(url);
     }
     
+    // Set playback speed rate (e.g. 0.75, 1.0, 1.25)
+    ttsPlayer.playbackSpeed = rate;
+    
     // Play the audio stream immediately
     ttsPlayer.play();
   } catch (err) {
     console.error('[speakSweetly] Failed to play TTS audio stream:', err);
   }
 };
+
+/**
+ * Stops any active TTS audio output immediately.
+ */
+export const stopSpeaking = () => {
+  if (ttsPlayer) {
+    try {
+      ttsPlayer.pause();
+    } catch (e) {}
+  }
+};
+

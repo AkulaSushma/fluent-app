@@ -8,6 +8,7 @@ from app.api.v1.articles import router as articles_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.coach import router as coach_router
 from app.api.v1.curriculum import router as curriculum_router
+from app.api.v1.speaking import router as speaking_router
 from app.api.v1.gamification import router as gamification_router
 from app.api.v1.grammar import router as grammar_router
 from app.api.v1.progress import router as progress_router
@@ -35,4 +36,5 @@ api_router.include_router(settings_router)
 api_router.include_router(coach_router)
 api_router.include_router(cognitive_router)
 api_router.include_router(content_router)
+api_router.include_router(speaking_router)
 

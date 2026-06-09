@@ -11,3 +11,4 @@ email-validator>=2.0.0
 psycopg[binary]
 asyncpg
 alembic
+sentry-sdk[fastapi]>=2.0.0

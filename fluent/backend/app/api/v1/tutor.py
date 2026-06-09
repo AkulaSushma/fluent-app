@@ -5,14 +5,19 @@ Fluent API — Conversational AI tutor endpoints.
 from __future__ import annotations
 
 import datetime
+import json
+import logging
 from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, get_current_user
 from app.db.models import User, TutorMessage, DailyPlan, ContentItem, ContentType, CefrLevel
 from app.schemas.ai import ChatMessage, TutorResponse, TutorTurn
-from app.services.ai_router import ai_complete
+from app.services.ai_router import ai_complete, ai_stream
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/tutor", tags=["tutor"])
 
@@ -56,7 +61,7 @@ async def get_history(
     ]
 
 
-@router.post("/chat", response_model=TutorResponse)
+@router.post("/chat")
 async def chat(
     body: TutorTurn,
     db: AsyncSession = Depends(get_db),
@@ -153,6 +158,61 @@ async def chat(
     messages.append({"role": "user", "content": body.message})
 
     # 6. Call LLM (or fallback on error)
+    if body.stream:
+        async def stream_generator():
+            import asyncio
+            accumulated_reply = ""
+            try:
+                async for token in ai_stream(messages, fast=True):
+                    accumulated_reply += token
+                    yield f"data: {json.dumps({'token': token})}\n\n"
+            except Exception as e:
+                log.warning("AI stream failed, using fallback: %s", e)
+                # Fallback local conversational tutor response matching user input keywords
+                user_msg = body.message.lower()
+                if "hello" in user_msg or "hi" in user_msg:
+                    reply = "Hello! I'm your Fluent Tutor. How is your day going? Let's practice some English!"
+                elif "mistake" in user_msg or "correct" in user_msg:
+                    reply = "Making mistakes is a natural part of learning. Just keep practicing and you'll get better!"
+                elif "grammar" in user_msg:
+                    reply = "Grammar is like the puzzle pieces of a language. Tell me what topic you want to discuss today!"
+                elif "routine" in user_msg or "morning" in user_msg:
+                    reply = "A structured daily routine is key to success! What does your typical morning look like?"
+                elif "motivated" in user_msg or "motivation" in user_msg:
+                    reply = "Motivation gets you started, but consistency is what keeps you going. Let's practice for just 5 minutes today!"
+                else:
+                    reply = "That's very interesting! Could you tell me more about it? Let's keep the conversation going."
+                
+                # Stream the fallback response word by word with tiny delay
+                words = reply.split(" ")
+                for i, word in enumerate(words):
+                    space_char = " " if i < len(words) - 1 else ""
+                    token = word + space_char
+                    accumulated_reply += token
+                    yield f"data: {json.dumps({'token': token})}\n\n"
+                    await asyncio.sleep(0.05)
+            finally:
+                # 7. Persist both user message and assistant reply to DB
+                try:
+                    user_msg_db = TutorMessage(
+                        user_id=current_user.id,
+                        role="user",
+                        content=body.message
+                    )
+                    assistant_msg_db = TutorMessage(
+                        user_id=current_user.id,
+                        role="assistant",
+                        content=accumulated_reply.strip() or "..."
+                    )
+                    db.add(user_msg_db)
+                    db.add(assistant_msg_db)
+                    await db.commit()
+                except Exception as db_err:
+                    log.error("Failed to persist streaming chat messages: %s", db_err)
+                yield "data: [DONE]\n\n"
+
+        return StreamingResponse(stream_generator(), media_type="text/event-stream")
+
     try:
         reply = await ai_complete(messages, fast=True)
     except Exception:

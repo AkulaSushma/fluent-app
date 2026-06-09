@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.core.config import settings
 from app.db.models import User
 from app.schemas.learning import PronunciationResult
 from app.services.content_service import evaluate_pronunciation
@@ -91,7 +92,22 @@ async def evaluate(
         return PronunciationResult(**result)
 
     # Evaluate accuracy using AI (or fast-path local match)
-    result = await evaluate_pronunciation(target, transcript)
+    result = await evaluate_pronunciation(
+        target=target,
+        transcript=transcript,
+        user_id=current_user.id,
+        db=db,
+        audio_bytes=contents
+    )
+    
+    # Ensure backward compatibility fields are set
+    if "matched_words" not in result or result["matched_words"] is None:
+        result["matched_words"] = [w["text"] for w in result.get("words", []) if w["status"] == "good"]
+    if "problem_words" not in result or result["problem_words"] is None:
+        result["problem_words"] = [w["text"] for w in result.get("words", []) if w["status"] in ("miss", "warn")]
+    if "tip" not in result or result["tip"] is None:
+        result["tip"] = result.get("motivation", "")
+        
     return PronunciationResult(**result)
 
 

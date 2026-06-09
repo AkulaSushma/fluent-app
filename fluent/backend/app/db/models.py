@@ -218,6 +218,11 @@ class SRSCard(TimestampMixin, Base):
     next_review: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     last_quality: Mapped[int] = mapped_column(Integer, default=0)
 
+    # FSRS columns
+    fsrs_state: Mapped[int] = mapped_column(Integer, default=0)
+    fsrs_stability: Mapped[float] = mapped_column(Float, default=2.5)
+    fsrs_difficulty: Mapped[float] = mapped_column(Float, default=5.0)
+
     user: Mapped["User"] = relationship(back_populates="srs_cards")
 
 
@@ -480,6 +485,11 @@ class CognitiveSrsQueue(TimestampMixin, Base):
     repetitions: Mapped[int] = mapped_column(Integer, default=0)
     interval_days: Mapped[int] = mapped_column(Integer, default=0)
 
+    # FSRS columns
+    fsrs_state: Mapped[int] = mapped_column(Integer, default=0)
+    fsrs_stability: Mapped[float] = mapped_column(Float, default=2.5)
+    fsrs_difficulty: Mapped[float] = mapped_column(Float, default=5.0)
+
     user: Mapped["User"] = relationship(back_populates="cognitive_srs_queue")
     word: Mapped["VocabularyNode"] = relationship()
 
@@ -656,5 +666,17 @@ class TutorMessage(TimestampMixin, Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
 
     user: Mapped["User"] = relationship(back_populates="tutor_messages")
+
+
+class SpeakingAttempt(TimestampMixin, Base):
+    __tablename__ = "speaking_attempts"
+
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    passage_theme: Mapped[str] = mapped_column(String(120), nullable=False)
+    accuracy: Mapped[int] = mapped_column(Integer, nullable=False)
+    wpm: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    user: Mapped["User"] = relationship()
+
 
 

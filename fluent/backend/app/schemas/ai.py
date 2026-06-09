@@ -13,6 +13,8 @@ class ChatMessage(BaseModel):
 class TutorTurn(BaseModel):
     history: list[ChatMessage] = []
     message: str
+    stream: bool = False
+
 
 
 class TutorResponse(BaseModel):

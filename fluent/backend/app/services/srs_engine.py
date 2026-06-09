@@ -19,19 +19,7 @@ async def review_card(
     word: str,
     quality: int,
 ) -> dict:
-    """Update a card based on the user's self-reported review quality (0-5).
-
-    SM-2 algorithm:
-      • quality >= 3 → successful recall: repetitions++, interval grows by EF.
-      • quality <  3 → lapse: repetitions reset to 0, interval reset to 1.
-      • EF = max(1.3, EF + 0.1 − (5−q)×(0.08 + (5−q)×0.02))
-
-    Returns the updated card state dict.
-
-    Raises:
-        ValueError: If quality is not in the 0-5 range.
-        LookupError: If no card exists for the given user/word.
-    """
+    """Update a card utilizing the FSRS Spaced Repetition algorithm based on rating quality (0-5)."""
     if not 0 <= quality <= 5:
         raise ValueError(f"Quality must be 0-5, got {quality}")
 
@@ -45,28 +33,53 @@ async def review_card(
     if card is None:
         raise LookupError(f"No SRS card found for user={user_id}, word='{word}'")
 
-    # ── SM-2 ease-factor adjustment ──────────────────────────────────
-    ef = card.ease_factor + 0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02)
-    ef = max(1.3, ef)
+    from app.services.fsrs import calculate_next_review
+    from datetime import datetime, timezone
 
-    if quality >= 3:
-        # Successful recall
-        if card.repetitions == 0:
-            interval = 1
-        elif card.repetitions == 1:
-            interval = 6
-        else:
-            interval = round(card.interval_days * ef)
-        card.repetitions += 1
-    else:
-        # Lapse — restart learning
-        card.repetitions = 0
-        interval = 1
+    # Map quality (0-5) to FSRS grade (0-3)
+    fsrs_grade = 0
+    if quality == 3:
+        fsrs_grade = 1
+    elif quality == 4:
+        fsrs_grade = 2
+    elif quality >= 5:
+        fsrs_grade = 3
 
-    card.ease_factor = ef
+    # Calculate last reviewed datetime
+    last_reviewed = None
+    if card.repetitions > 0:
+        last_reviewed = datetime.combine(
+            card.next_review - timedelta(days=card.interval_days),
+            datetime.min.time()
+        ).replace(tzinfo=timezone.utc)
+
+    current_time = datetime.now(timezone.utc)
+
+    # Load existing difficulty & stability
+    stability = card.fsrs_stability if card.fsrs_stability is not None else 2.5
+    difficulty = card.fsrs_difficulty if card.fsrs_difficulty is not None else 5.0
+
+    new_stability, new_difficulty, due_at = calculate_next_review(
+        stability=stability,
+        difficulty=difficulty,
+        grade=fsrs_grade,
+        last_reviewed=last_reviewed,
+        current_time=current_time
+    )
+
+    interval = max(1, round(new_stability))
+
+    # Update card state
+    card.fsrs_state = 2 if quality >= 3 else 3 # 2: review, 3: relearning
+    card.fsrs_stability = new_stability
+    card.fsrs_difficulty = new_difficulty
     card.interval_days = interval
+    card.repetitions = card.repetitions + 1 if quality >= 3 else 0
     card.next_review = date.today() + timedelta(days=interval)
     card.last_quality = quality
+
+    # Update ease_factor for SM-2 fallback visibility
+    card.ease_factor = new_stability / max(1, card.repetitions)
 
     await db.flush()
 
@@ -78,6 +91,9 @@ async def review_card(
         "repetitions": card.repetitions,
         "next_review": card.next_review.isoformat(),
         "last_quality": card.last_quality,
+        "fsrs_state": card.fsrs_state,
+        "fsrs_stability": round(card.fsrs_stability, 4),
+        "fsrs_difficulty": round(card.fsrs_difficulty, 4),
     }
 
 
@@ -172,6 +188,9 @@ async def add_card(
         repetitions=0,
         next_review=date.today(),
         last_quality=0,
+        fsrs_state=0,
+        fsrs_stability=2.5,
+        fsrs_difficulty=5.0,
     )
     db.add(card)
     await db.flush()
