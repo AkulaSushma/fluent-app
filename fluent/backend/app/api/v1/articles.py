@@ -48,6 +48,7 @@ async def random_article(
     from app.db.models import ContentItem
     from zoneinfo import ZoneInfo
     from sqlalchemy import select
+    from datetime import datetime, timezone
     
     # Resolve user local today date
     tz_str = current_user.timezone or "UTC"

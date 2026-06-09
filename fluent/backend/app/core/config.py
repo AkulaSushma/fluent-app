@@ -36,6 +36,8 @@ import socket
 def force_ipv4_in_url(url_str: str) -> str:
     if not url_str or "://" not in url_str:
         return url_str
+    if url_str.startswith("sqlite"):
+        return url_str
     try:
         prefix, rest = url_str.split("://", 1)
         if "@" in rest:
@@ -55,6 +57,9 @@ def force_ipv4_in_url(url_str: str) -> str:
         else:
             host = host_port
             port = ""
+            
+        if not host:
+            return url_str
             
         try:
             addr_info = socket.getaddrinfo(host, None, family=socket.AF_INET)
