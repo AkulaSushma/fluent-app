@@ -18,6 +18,7 @@ engine = create_async_engine(
     settings.DATABASE_URL,
     echo=os.getenv("SQL_ECHO", "false").lower() == "true",
     future=True,
+    connect_args={"prepare_threshold": None},
 )
 
 async_session_factory = async_sessionmaker(
