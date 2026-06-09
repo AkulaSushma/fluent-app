@@ -8,7 +8,14 @@ import {
   Dimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Animated, { FadeInDown } from 'react-native-reanimated';
+import Animated, {
+  FadeInDown,
+  useSharedValue,
+  useAnimatedStyle,
+  withSequence,
+  withTiming,
+  Easing,
+} from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useIsFocused } from '@react-navigation/native';
 import Ionicons from '@expo/vector-icons/Ionicons';
@@ -110,6 +117,23 @@ export default function ProgressScreen() {
   const [seriousness, setSeriousness] = useState<SeriousnessResponse | null>(null);
   const [loadingExtra, setLoadingExtra] = useState(true);
 
+  const streakScale = useSharedValue(1);
+
+  useEffect(() => {
+    if (isFocused) {
+      streakScale.value = withSequence(
+        withTiming(1.3, { duration: 500, easing: Easing.out(Easing.back(1.5)) }),
+        withTiming(1.0, { duration: 400, easing: Easing.inOut(Easing.ease) })
+      );
+    } else {
+      streakScale.value = 1;
+    }
+  }, [isFocused]);
+
+  const animatedScaleStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: streakScale.value }],
+  }));
+
   const loadProgressDetails = async () => {
     // Stale-While-Revalidate: Show loading only on first load
     if (heatmap.length === 0 || !seriousness) {
@@ -173,7 +197,10 @@ export default function ProgressScreen() {
       </Animated.View>
 
       {/* Big streak card */}
-      <Animated.View entering={FadeInDown.delay(80).springify().damping(18)}>
+      <Animated.View 
+        entering={FadeInDown.delay(80).springify().damping(18)}
+        style={animatedScaleStyle}
+      >
         <Card index={1} dark style={styles.streakCard}>
           <View style={styles.glowCircle} />
           <AnimatedStreakNumber value={streak} isFocused={isFocused} />

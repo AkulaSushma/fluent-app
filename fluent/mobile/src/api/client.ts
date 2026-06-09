@@ -769,9 +769,14 @@ export const api = {
     }
   },
 
-  /* articles / teleprompter */
-  getRandomArticle: (level: string = 'advanced', day?: number, type: string = 'pronunciation') =>
-    request<ArticleResponse>(`/articles/random?level=${level}${day !== undefined ? `&day=${day}` : ''}&type=${type}`),
+  getRandomArticle: (level: string = 'advanced', day?: number, type: string = 'pronunciation') => {
+    if (type === 'pronunciation' || type === 'reading') {
+      const themes = ["confidence", "career growth", "travel stories", "technology", "leadership", "everyday conversation", "interviews", "storytelling"];
+      const randomTheme = themes[Math.floor(Math.random() * themes.length)];
+      return request<ArticleResponse>(`/speaking/passage?level=${level}&theme=${encodeURIComponent(randomTheme)}`);
+    }
+    return request<ArticleResponse>(`/articles/random?level=${level}${day !== undefined ? `&day=${day}` : ''}&type=${type}`);
+  },
 
   /* progress & session tracking */
   getProgress: () => request<UserProgressResponse>('/progress/me'),

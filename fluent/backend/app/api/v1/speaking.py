@@ -119,12 +119,27 @@ async def get_passage(theme: str = "confidence", level: str = "B1",
         data = _offline_passage(theme, level, weave_words)
     
     lines, total = _tokenize(data["sentences"])
+    
+    # Construct a beautiful explanation guide from focus words
+    focus_items = data.get("focus_words", [])
+    if focus_items:
+        explanation = "Key focus words for this passage:\n" + "\n".join([
+            f"• {item['word']} ({item.get('ipa', '')}): {item.get('tip', '')}" 
+            for item in focus_items
+        ])
+    else:
+        explanation = "Focus on reading at a steady, natural pace. Pause briefly at periods."
+
     payload = {
         "title": data.get("title", "Daily Reading"),
         "intro": data.get("intro", "Read with confidence. Your voice is getting stronger."),
-        "lines": lines, "word_count": total,
-        "focus_words": data.get("focus_words", []),
-        "level": level, "theme": theme,
+        "content": " ".join(data["sentences"]),
+        "explanation": explanation,
+        "lines": lines, 
+        "word_count": total,
+        "focus_words": focus_items,
+        "level": level, 
+        "theme": theme,
         "weaved_words": weave_words
     }
     await cache_set(key, payload, ttl=86400)

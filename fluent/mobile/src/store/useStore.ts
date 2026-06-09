@@ -298,9 +298,23 @@ export const useStore = create<StoreState>((set, get) => ({
         return;
       }
       setAuthToken(savedToken);
+
+      // Load cached username for instantaneous UI rendering
+      const cachedName = await SecureStore.getItemAsync('user_name').catch(() => null);
+      if (cachedName) {
+        const initials = cachedName
+          .split(' ')
+          .filter(Boolean)
+          .map((n) => n[0])
+          .join('')
+          .slice(0, 2)
+          .toUpperCase() || 'US';
+        set({ name: cachedName, initials });
+      }
+
       set({ token: savedToken, isAuthenticated: true, isLoadingAuth: false });
       
-      // Fetch initial data in parallel
+      // Fetch fresh initial data in parallel
       await Promise.all([
         get().fetchProgress(),
         get().fetchVocabDeck(),
@@ -326,11 +340,14 @@ export const useStore = create<StoreState>((set, get) => ({
       const res = await api.login(email, password);
       await SecureStore.setItemAsync('user_token', res.access_token);
       setAuthToken(res.access_token);
-      set({ token: res.access_token, isAuthenticated: true, isLoadingData: false });
       
-      // Pre-fetch all initial data
-      await Promise.all([
-        get().fetchProgress(),
+      // Load user profile details first so we have the correct name before showing the home screen
+      await get().fetchProgress();
+
+      set({ token: res.access_token, isAuthenticated: true });
+      
+      // Load remaining app data in the background
+      Promise.all([
         get().fetchVocabDeck(),
         get().fetchCurriculumToday(),
         get().fetchXpState(),
@@ -339,7 +356,9 @@ export const useStore = create<StoreState>((set, get) => ({
         get().fetchAchievements(),
         get().fetchVocabThemes(),
         get().fetchGrammarTopics(),
-      ]);
+      ]).catch(() => {});
+
+      set({ isLoadingData: false });
     } catch (err) {
       set({ isLoadingData: false });
       throw err;
@@ -352,11 +371,25 @@ export const useStore = create<StoreState>((set, get) => ({
       const res = await api.register(email, name, password);
       await SecureStore.setItemAsync('user_token', res.access_token);
       setAuthToken(res.access_token);
-      set({ token: res.access_token, isAuthenticated: true, isLoadingData: false });
+
+      // Pre-save username to SecureStore
+      await SecureStore.setItemAsync('user_name', name).catch(() => {});
+      const initials = name
+        .split(' ')
+        .filter(Boolean)
+        .map((n) => n[0])
+        .join('')
+        .slice(0, 2)
+        .toUpperCase() || 'US';
+      set({ name, initials });
       
-      // Pre-fetch all initial data
-      await Promise.all([
-        get().fetchProgress(),
+      // Fetch initial progress metrics
+      await get().fetchProgress();
+
+      set({ token: res.access_token, isAuthenticated: true });
+      
+      // Load remaining app data in the background
+      Promise.all([
         get().fetchVocabDeck(),
         get().fetchCurriculumToday(),
         get().fetchXpState(),
@@ -365,7 +398,9 @@ export const useStore = create<StoreState>((set, get) => ({
         get().fetchAchievements(),
         get().fetchVocabThemes(),
         get().fetchGrammarTopics(),
-      ]);
+      ]).catch(() => {});
+
+      set({ isLoadingData: false });
     } catch (err) {
       set({ isLoadingData: false });
       throw err;
@@ -417,6 +452,8 @@ export const useStore = create<StoreState>((set, get) => ({
           .join('')
           .slice(0, 2)
           .toUpperCase() || 'US';
+        // Cache name for instant loading
+        await SecureStore.setItemAsync('user_name', user.name).catch(() => {});
       }
 
       set({
