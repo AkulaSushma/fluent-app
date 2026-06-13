@@ -226,6 +226,18 @@ class CurriculumTaskOut(BaseModel):
     level: str | None = None
 
 
+class ReviewTaskOut(BaseModel):
+    learned_day: int
+    review_number: int
+    review_label: str
+    review_message: str
+    theme: str
+    vocab_review: list = []
+    grammar_review: list = []
+    corporate_review: list = []
+    key_takeaway: str = ""
+
+
 class CurriculumTodayResponse(BaseModel):
     day_number: int
     week_number: int
@@ -233,6 +245,7 @@ class CurriculumTodayResponse(BaseModel):
     difficulty_level: int
     morning_tasks: list[CurriculumTaskOut]
     evening_tasks: list[CurriculumTaskOut]
+    review_tasks: list[ReviewTaskOut] = []
     total_xp: int
     completed_xp: int
     plan_progress: float

@@ -211,6 +211,22 @@ async def get_today(
         completed_ids,
     )
 
+    raw_reviews = plan_dict.get("review_tasks", [])
+    review_tasks = [
+        {
+            "learned_day": r["learned_on_day"],
+            "review_number": r["review_number"],
+            "review_label": r["label"],
+            "review_message": r["message"],
+            "theme": r["theme"],
+            "vocab_review": r.get("vocab_review", []),
+            "grammar_review": r.get("grammar_review", []),
+            "corporate_review": r.get("corporate_review", []),
+            "key_takeaway": r.get("key_takeaway", ""),
+        }
+        for r in raw_reviews
+    ]
+
     all_tasks = morning + evening
     total_xp = sum(t.xp_reward for t in all_tasks)
     completed_xp = sum(t.xp_reward for t in all_tasks if t.completed)
@@ -223,6 +239,7 @@ async def get_today(
         difficulty_level=curriculum_day.difficulty_level,
         morning_tasks=morning,
         evening_tasks=evening,
+        review_tasks=review_tasks,
         total_xp=total_xp,
         completed_xp=completed_xp,
         plan_progress=round(plan_progress, 2),

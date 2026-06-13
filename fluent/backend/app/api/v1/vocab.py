@@ -62,6 +62,19 @@ async def get_deck(
     db: AsyncSession = Depends(get_db),
 ):
     """Generate a vocabulary deck for a given theme."""
+    # Try fetching day-indexed vocabulary first
+    try:
+        from app.services.curriculum_data import DAYS
+        from app.services.curriculum_service import _get_progress
+        progress = await _get_progress(db, current_user.id)
+        user_day = progress.current_day
+        day_data = DAYS.get(user_day)
+        if day_data and "vocab_words" in day_data:
+            cards = day_data["vocab_words"]
+            return {"cards": cards}
+    except Exception:
+        pass
+
     from app.services.daily_planner import _get_existing_plan
     from app.db.models import ContentItem
     from zoneinfo import ZoneInfo

@@ -69,11 +69,6 @@ async def generate_daily_plan(db: AsyncSession, user_id: str) -> dict:
     now_local = now_utc.astimezone(user_tz)
     today = now_local.date()
 
-    # ── Return existing plan if already generated ────────────────────
-    existing = await _get_existing_plan(db, user_id, today)
-    if existing is not None:
-        return _plan_to_dict(existing)
-
     # ── Gather context ───────────────────────────────────────────────
     try:
         curriculum = await curriculum_service.get_user_today(db, user_id)
@@ -81,6 +76,13 @@ async def generate_daily_plan(db: AsyncSession, user_id: str) -> dict:
         # Auto-initialise curriculum on first call
         await curriculum_service.initialize_curriculum(db, user_id)
         curriculum = await curriculum_service.get_user_today(db, user_id)
+
+    current_day = curriculum.get("current_day", 1)
+
+    # ── Return existing plan if already generated ────────────────────
+    existing = await _get_existing_plan(db, user_id, today)
+    if existing is not None:
+        return _plan_to_dict(existing, current_day)
 
     vocab_theme: str = curriculum.get("vocab_theme", "daily_life")
     grammar_topic: str = curriculum.get("grammar_topic", "Present Perfect")
@@ -278,7 +280,7 @@ async def generate_daily_plan(db: AsyncSession, user_id: str) -> dict:
     db.add(plan)
     await db.flush()
 
-    return _plan_to_dict(plan)
+    return _plan_to_dict(plan, current_day)
 
 
 async def complete_task(
@@ -468,17 +470,20 @@ def _calc_progress(morning: list[dict], evening: list[dict]) -> float:
     return done / len(all_tasks)
 
 
-def _plan_to_dict(plan: DailyPlan) -> dict:
+def _plan_to_dict(plan: DailyPlan, current_day: int = 1) -> dict:
     """Serialise a DailyPlan ORM instance to a plain dict."""
     morning: list[dict] = plan.morning_tasks or []
     evening: list[dict] = plan.evening_tasks or []
     progress = _calc_progress(morning, evening)
+    from app.services import srs_scheduler
+    review_tasks = srs_scheduler.get_review_content(current_day)
 
     return {
         "id": plan.id,
         "date": plan.date.isoformat(),
         "morning_tasks": morning,
         "evening_tasks": evening,
+        "review_tasks": review_tasks,
         "total_xp": plan.total_xp,
         "completed": plan.completed,
         "progress": round(progress, 4),

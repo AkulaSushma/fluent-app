@@ -102,6 +102,56 @@ async def get_passage(theme: str = "confidence", level: str = "B1",
         # Pick up to 3 random words to weave
         weave_words = random.sample(srs_words, min(3, len(srs_words)))
 
+    # Try fetching day-indexed content first
+    try:
+        from app.services.curriculum_data import DAYS
+        from app.services.curriculum_service import _get_progress
+        progress = await _get_progress(db, user.id)
+        user_day = progress.current_day
+        day_data = DAYS.get(user_day)
+        
+        if day_data and "speaking_passage" in day_data:
+            sp = day_data["speaking_passage"]
+            sentences = sp.get("sentences", [])
+            focus_items = list(sp.get("focus_words", []))
+            
+            # Keep word weaving for bonus integration by adding weaved words to focus items
+            for word in weave_words:
+                if not any(item["word"].lower() == word.lower() for item in focus_items):
+                    focus_items.append({
+                        "word": word,
+                        "ipa": "/.../",
+                        "tip": "Struggling review word: focus on clear pronunciation."
+                    })
+            
+            title = sp.get("title", f"Day {user_day} Passage")
+            intro = sp.get("intro", "Read the passage aloud.")
+            
+            if focus_items:
+                explanation = "Key focus words for this passage:\n" + "\n".join([
+                    f"• {item['word']} ({item.get('ipa', '')}): {item.get('tip', '')}" 
+                    for item in focus_items
+                ])
+            else:
+                explanation = "Focus on reading at a steady, natural pace."
+                
+            lines, total = _tokenize(sentences)
+            
+            return {
+                "title": title,
+                "intro": intro,
+                "content": " ".join(sentences),
+                "explanation": explanation,
+                "lines": lines, 
+                "word_count": total,
+                "focus_words": focus_items,
+                "level": level, 
+                "theme": day_data.get("theme", theme),
+                "weaved_words": weave_words
+            }
+    except Exception:
+        pass
+
     # Weave words are part of cache key to ensure fresh content is generated when weave set changes
     key = make_key("speaking_passage", theme, level, day, "_".join(sorted(weave_words)))
     if (hit := await cache_get(key)) is not None:

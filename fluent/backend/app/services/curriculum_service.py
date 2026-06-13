@@ -103,12 +103,18 @@ def _build_curriculum() -> list[dict]:
         focus, activities.
     """
     data: list[dict] = []
+    
+    try:
+        from app.services.curriculum_data import DAYS
+    except ImportError:
+        DAYS = {}
 
     for day in range(1, 91):
-        # Phase and difficulty
+        day_data = DAYS.get(day)
+        
+        # Phase and difficulty defaults
         if day <= 30:
             phase = "foundation"
-            # difficulty ramps 1→4 linearly across 30 days
             difficulty = 1 + int((day - 1) * 3 / 29)
         elif day <= 60:
             phase = "building"
@@ -119,12 +125,19 @@ def _build_curriculum() -> list[dict]:
 
         week_number = (day - 1) // 7 + 1
         weekday = (day - 1) % 7  # 0=Mon in our pattern
-
-        vocab_theme = _VOCAB_THEMES[(day - 1) % len(_VOCAB_THEMES)]
-        grammar_topic = _GRAMMAR_TOPICS[(day - 1) % len(_GRAMMAR_TOPICS)]
-        reading_level = _READING_LEVELS[phase]
         weekday_info = _WEEKDAY_LABELS[weekday]
 
+        if day_data:
+            vocab_theme = day_data.get("theme", "daily_life")
+            grammar_topic = day_data.get("grammar", {}).get("topic", "Grammar")
+            speaking_exercise = day_data.get("speaking_passage", {}).get("title", weekday_info["speaking_exercise"])
+            difficulty = day_data.get("difficulty_level", difficulty)
+        else:
+            vocab_theme = _VOCAB_THEMES[(day - 1) % len(_VOCAB_THEMES)]
+            grammar_topic = _GRAMMAR_TOPICS[(day - 1) % len(_GRAMMAR_TOPICS)]
+            speaking_exercise = weekday_info["speaking_exercise"]
+
+        reading_level = _READING_LEVELS[phase]
         xp_reward = 80 + difficulty * 10  # 90-180 range
 
         data.append(
@@ -135,7 +148,7 @@ def _build_curriculum() -> list[dict]:
                 "vocab_theme": vocab_theme,
                 "grammar_topic": grammar_topic,
                 "reading_level": reading_level,
-                "speaking_exercise": weekday_info["speaking_exercise"],
+                "speaking_exercise": speaking_exercise,
                 "difficulty_level": difficulty,
                 "xp_reward": xp_reward,
                 "focus": weekday_info["focus"],

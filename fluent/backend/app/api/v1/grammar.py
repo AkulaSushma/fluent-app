@@ -185,53 +185,9 @@ async def create_lesson(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Generate a rich grammar lesson with examples, mistakes, tips, and quiz."""
-    from app.services.daily_planner import _get_existing_plan
-    from app.db.models import ContentItem
-    from zoneinfo import ZoneInfo
-    
-    # Get user's local today date
-    tz_str = current_user.timezone or "UTC"
-    try:
-        user_tz = ZoneInfo(tz_str)
-    except Exception:
-        user_tz = timezone.utc
-    now_local = datetime.now(timezone.utc).astimezone(user_tz)
-    today = now_local.date()
-    
-    plan = await _get_existing_plan(db, current_user.id, today)
-    
-    grammar_item = None
-    if plan:
-        for t in (plan.morning_tasks or []):
-            if t.get("type") == "grammar" and t.get("content_ids"):
-                grammar_item_id = t.get("content_ids")[0]
-                stmt = select(ContentItem).where(ContentItem.id == grammar_item_id)
-                res = await db.execute(stmt)
-                grammar_item = res.scalar_one_or_none()
-                break
-
-    # Load the base grammar lesson first (with Redis caching)
-    key = make_key("grammar_lesson", body.topic, body.level)
-    data = await cache_get(key)
-    if not data:
-        data = await generate_grammar_lesson(body.topic, body.level)
-        await cache_set(key, data, ttl=604800)  # 7 days
-    else:
-        # Create a deep copy to prevent mutation of cached data when overriding quiz below
-        import copy
-        data = copy.deepcopy(data)
-
-    if grammar_item:
-        payload = grammar_item.payload
-        quiz_question = {
-            "q": payload.get("prompt"),
-            "options": payload.get("options"),
-            "answer": payload.get("answer_index"),
-            "explanation": payload.get("explanation", "")
-        }
-        # Override the quiz with the daily plan scheduled question
-        data["quiz"] = [quiz_question]
+    # Load grammar lesson directly from the local library (grammar_data.py)
+    # The local library is static and the in-memory cache inside generate_grammar_lesson() is sufficient.
+    data = await generate_grammar_lesson(body.topic, body.level)
 
     return GrammarLessonResponse(**data)
 

@@ -45,6 +45,36 @@ async def random_article(
     db: AsyncSession = Depends(get_db),
 ):
     """Get a teleprompter article or pronunciation passage based on the daily plan and task type."""
+    # Try fetching day-indexed content first
+    try:
+        from app.services.curriculum_data import DAYS
+        from app.services.curriculum_service import _get_progress
+        progress = await _get_progress(db, current_user.id)
+        user_day = progress.current_day
+        day_data = DAYS.get(user_day)
+        if day_data:
+            if type == "pronunciation" and "pronunciation_drill" in day_data:
+                drill = day_data["pronunciation_drill"]
+                sentences = drill.get("sentences", [])
+                content = " ".join(sentences)
+                return ArticleResponse(
+                    title="Pronunciation Warm-up",
+                    content=content,
+                    word_count=len(content.split()),
+                    explanation=drill.get("tip", "Focus phonemes: " + ", ".join(drill.get("focus_phonemes", [])))
+                )
+            elif type == "reading" and "reading_article" in day_data:
+                article = day_data["reading_article"]
+                body = article.get("body", "")
+                return ArticleResponse(
+                    title=article.get("title", f"Day {user_day} Article"),
+                    content=body,
+                    word_count=len(body.split()),
+                    explanation="Read the text carefully and practice your pacing."
+                )
+    except Exception:
+        pass
+
     from app.services.daily_planner import _get_existing_plan
     from app.db.models import ContentItem
     from zoneinfo import ZoneInfo
